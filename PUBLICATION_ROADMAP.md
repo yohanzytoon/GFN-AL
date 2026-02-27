@@ -1,6 +1,5 @@
 # Current Milestone Scope
 
-This repo is intentionally reduced to the February 27 milestone only.
 
 ## Included Methods
 
