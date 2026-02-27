@@ -1,0 +1,43 @@
+seed: 0
+device: cpu
+
+env:
+  max_length: 7
+
+oracle:
+  budget: 1000
+  vocabulary_check: true
+
+metrics:
+  # If known, set to the true environment optimum for true regret computation
+  optimum_score: null
+
+active:
+  initial_size: 64
+  batch_size: 16
+  candidate_pool_size: 512
+  max_rounds: 80
+  surrogate_type: gp
+  acquisition: ucb
+  acquisition_beta: 2.0
+  ei_xi: 0.01
+  surrogate:
+    fit_maxiter: 80
+    hidden_dim: 256
+    n_layers: 2
+    dropout: 0.2
+    n_models: 5
+    epochs: 120
+    mc_samples: 40
+
+logging:
+  output_dir: outputs
+  use_wandb: false
+  wandb_project: gfn-active-learning
+  wandb_entity: null
+
+hydra:
+  run:
+    dir: ${logging.output_dir}/active/${now:%Y-%m-%d_%H-%M-%S}_seed${seed}
+  job:
+    chdir: false
