@@ -24,17 +24,6 @@
 - Use UCB to pick the next batch of oracle queries.
 - Repeat until the budget is exhausted.
 
-## Explicitly Removed
-
-The following are no longer part of this branch:
-- hybrid GFlowNet training
-- ablation sweeps
-- comparison runners
-- publication export tooling
-- alternate surrogate families
-- alternate acquisition functions
-- plotting utilities
-- WandB integration
 
 ## What To Run Right Now
 
