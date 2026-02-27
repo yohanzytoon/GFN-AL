@@ -18,3 +18,7 @@ wandb/
 
 # OS files
 .DS_Store
+
+# Local notes / writeups
+DEVOIR4_METHODES_PRELIMINAIRES.tex
+CODEBASE_EXPLANATION.tex
