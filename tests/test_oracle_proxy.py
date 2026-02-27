@@ -11,7 +11,6 @@ def test_oracle_proxy_budget_enforced():
     env = ScrabbleOracleEnv(max_length=7, oracle_budget=3, device="cpu")
     proxy = OracleProxy(
         device="cpu",
-        backend="oracle",
         oracle_budget=3,
         enforce_budget=True,
         vocabulary_check=False,
@@ -32,10 +31,3 @@ def test_oracle_proxy_budget_enforced():
 
     with pytest.raises(RuntimeError):
         proxy(states[:1])
-
-
-def test_oracle_proxy_surrogate_requires_checkpoint():
-    env = ScrabbleOracleEnv(max_length=7, device="cpu")
-    proxy = OracleProxy(device="cpu", backend="surrogate")
-    with pytest.raises(ValueError):
-        proxy.setup(env)
