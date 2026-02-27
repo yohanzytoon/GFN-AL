@@ -3,6 +3,7 @@ device: cpu
 
 env:
   max_length: 7
+  num_tokens: 27
 
 oracle:
   budget: 1000
@@ -12,8 +13,10 @@ metrics:
   # If known, set to the true environment optimum for true regret computation
   optimum_score: null
 
+dataset:
+  path: null
+
 baseline:
-  num_queries: 1000
   train_fraction: 0.8
   hidden_dim: 256
   n_layers: 2
@@ -24,9 +27,6 @@ baseline:
 
 logging:
   output_dir: outputs
-  use_wandb: false
-  wandb_project: gfn-active-learning
-  wandb_entity: null
 
 hydra:
   run:

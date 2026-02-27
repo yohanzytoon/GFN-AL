@@ -9,10 +9,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from environments.scrabble_oracle_env import ScrabbleOracleEnv
-from proxies.oracle_proxy import OracleProxy
+from training.dataset import load_dataset
 from utils.logging import ExperimentLogger, set_global_seed
-from utils.metrics import build_query_curve, regression_metrics, search_quality_metrics
+from utils.metrics import regression_metrics, search_quality_metrics
 
 
 class _MLPRegressor(nn.Module):
@@ -53,55 +52,38 @@ def run_supervised_baseline(
     set_global_seed(seed)
 
     env_cfg = config["env"]
-    oracle_cfg = config["oracle"]
+    dataset_cfg = config["dataset"]
     baseline_cfg = config["baseline"]
 
-    env = ScrabbleOracleEnv(
-        max_length=int(env_cfg["max_length"]),
-        oracle_budget=int(oracle_cfg["budget"]),
-        track_oracle_history=True,
-        device=device,
-    )
-    oracle = OracleProxy(
-        device=device,
-        float_precision=32,
-        oracle_budget=int(oracle_cfg["budget"]),
-        enforce_budget=True,
-        vocabulary_check=bool(oracle_cfg.get("vocabulary_check", False)),
-        backend="oracle",
-    )
-    oracle.setup(env)
+    dataset_path = dataset_cfg.get("path")
+    if not dataset_path:
+        raise ValueError(
+            "baseline requires dataset.path to point to a saved .npz file. "
+            "Run `python experiments/run_dataset.py` first."
+        )
 
-    n_queries = int(min(oracle_cfg["budget"], baseline_cfg.get("num_queries", oracle_cfg["budget"])))
-    random_states = env.get_random_terminating_states(
-        n_states=n_queries,
-        unique=False,
-        max_attempts=max(5 * n_queries, 1000),
-    )
-    proxy_states = env.states2proxy(random_states)
-    targets = oracle(proxy_states).detach().cpu().numpy().astype(np.float32)
+    states_np, targets = load_dataset(dataset_path)
+    if states_np.shape[0] != targets.shape[0]:
+        raise ValueError(
+            "dataset states and scores have inconsistent lengths: "
+            f"{states_np.shape[0]} vs {targets.shape[0]}"
+        )
+    if states_np.shape[0] < 2:
+        raise ValueError(
+            "Supervised baseline requires at least 2 labeled samples in the dataset. "
+            f"Received {states_np.shape[0]}."
+        )
 
-    curve = build_query_curve(
-        targets,
-        optimum_score=config.get("metrics", {}).get("optimum_score"),
-    )
     quality = search_quality_metrics(
         scores=targets.tolist(),
-        states=random_states,
-        oracle_queries=int(oracle.call_count),
+        states=states_np.tolist(),
+        oracle_queries=int(states_np.shape[0]),
         optimum_score=config.get("metrics", {}).get("optimum_score"),
         top_k=10,
         pad_value=0,
     )
-
-    states_np = np.asarray(random_states, dtype=np.int64)
-    features = _states_to_features(states_np, num_tokens=env.n_letters + 1)
-
-    if features.shape[0] < 2:
-        raise ValueError(
-            "Supervised baseline requires at least 2 oracle queries to form train/val splits. "
-            f"Received {features.shape[0]}."
-        )
+    num_tokens = int(env_cfg.get("num_tokens", 27))
+    features = _states_to_features(states_np, num_tokens=num_tokens)
 
     rng = np.random.default_rng(seed)
     perm = rng.permutation(features.shape[0])
@@ -171,7 +153,7 @@ def run_supervised_baseline(
         "method": "supervised_baseline",
         "seed": seed,
         **quality,
-        "curve": curve,
+        "dataset_path": str(Path(dataset_path)),
         "regression": reg_metrics,
         "model_path": str(model_path),
         "train_loss_final": float(train_losses[-1]),
