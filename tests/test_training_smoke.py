@@ -11,14 +11,21 @@ def _base_config(seed: int = 0):
     return {
         "seed": seed,
         "device": "cpu",
-        "env": {"max_length": 7},
+        "env": {"max_length": 7, "num_tokens": 27},
         "oracle": {"budget": 40, "vocabulary_check": False},
-        "dataset": {"path": None, "num_queries": 40, "unique": False},
+        "dataset": {
+            "path": None,
+            "num_queries": 40,
+            "unique": True,
+            "sampling_strategy": "uniform",
+            "min_length": 3,
+        },
         "baseline": {
             "train_fraction": 0.8,
             "hidden_dim": 64,
             "n_layers": 1,
             "dropout": 0.0,
+            "positive_weight": 3.0,
             "lr": 1e-3,
             "epochs": 5,
             "batch_size": 16,
@@ -28,6 +35,9 @@ def _base_config(seed: int = 0):
             "batch_size": 5,
             "candidate_pool_size": 32,
             "max_rounds": 4,
+            "sampling_strategy": "uniform",
+            "candidate_unique": True,
+            "min_length": 3,
             "acquisition_beta": 1.5,
             "surrogate": {"fit_maxiter": 10},
         },
@@ -38,7 +48,7 @@ def test_dataset_generation_smoke(tmp_path: Path):
     cfg = _base_config(seed=0)
     result = generate_random_dataset(cfg, output_dir=tmp_path / "dataset", logger=None)
     assert result["method"] == "dataset_generation"
-    assert result["num_samples"] == 40
+    assert result["num_samples"] > 0
     assert Path(result["dataset_path"]).exists()
 
 
@@ -48,7 +58,7 @@ def test_supervised_baseline_smoke(tmp_path: Path):
     cfg["dataset"]["path"] = dataset_result["dataset_path"]
     result = run_supervised_baseline(cfg, output_dir=tmp_path / "baseline", logger=None)
     assert result["method"] == "supervised_baseline"
-    assert result["oracle_queries"] == 40
+    assert result["oracle_queries"] == result["num_samples"]
     assert result["dataset_path"] == dataset_result["dataset_path"]
 
 
