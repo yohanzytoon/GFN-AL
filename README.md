@@ -5,9 +5,8 @@ This branch is now restricted to the preliminary scope only:
 - train a supervised baseline on a saved random oracle-labeled dataset
 - run one standard active-learning loop (GP surrogate + UCB)
 
-Everything beyond that scope has been removed from this repo.
 
-## What Remains
+## What do we have
 
 - `experiments/run_baseline.py`
 - `experiments/run_dataset.py`
