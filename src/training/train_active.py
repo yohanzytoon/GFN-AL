@@ -8,12 +8,10 @@ from typing import Any
 import numpy as np
 import torch
 
-from acquisition.ei import select_ei
-from acquisition.thompson import select_thompson
 from acquisition.ucb import select_ucb
 from environments.scrabble_oracle_env import ScrabbleOracleEnv
 from proxies.oracle_proxy import OracleProxy
-from surrogate import build_surrogate
+from surrogate.gp_model import BoTorchGPSurrogate
 from utils.logging import ExperimentLogger, set_global_seed
 from utils.metrics import (
     build_query_curve,
@@ -21,39 +19,6 @@ from utils.metrics import (
     running_best,
     search_quality_metrics,
 )
-
-
-def _select_batch(
-    acquisition: str,
-    mean: np.ndarray,
-    std: np.ndarray,
-    batch_size: int,
-    best_observed: float,
-    beta: float,
-    xi: float,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    acquisition = acquisition.lower()
-    if acquisition == "ucb":
-        return select_ucb(mean=mean, std=std, batch_size=batch_size, beta=beta)
-    if acquisition == "ei":
-        return select_ei(
-            mean=mean,
-            std=std,
-            best_observed=best_observed,
-            batch_size=batch_size,
-            xi=xi,
-        )
-    if acquisition == "thompson":
-        return select_thompson(
-            mean=mean,
-            std=std,
-            batch_size=batch_size,
-            random_state=rng,
-        )
-    if acquisition == "uncertainty":
-        return np.argsort(std)[::-1][:batch_size]
-    raise KeyError(f"Unknown acquisition function: {acquisition}")
 
 
 def run_active_learning(
@@ -69,7 +34,6 @@ def run_active_learning(
     if device == "cuda" and not torch.cuda.is_available():
         device = "cpu"
     set_global_seed(seed)
-    rng = np.random.default_rng(seed)
 
     env_cfg = config["env"]
     oracle_cfg = config["oracle"]
@@ -86,7 +50,6 @@ def run_active_learning(
         oracle_budget=int(oracle_cfg["budget"]),
         enforce_budget=True,
         vocabulary_check=bool(oracle_cfg.get("vocabulary_check", False)),
-        backend="oracle",
     )
     oracle.setup(env)
 
@@ -94,14 +57,14 @@ def run_active_learning(
     batch_size = int(active_cfg.get("batch_size", 16))
     candidate_pool_size = int(active_cfg.get("candidate_pool_size", 256))
     max_rounds = int(active_cfg.get("max_rounds", 200))
-    acquisition = str(active_cfg.get("acquisition", "ucb"))
     beta = float(active_cfg.get("acquisition_beta", 2.0))
-    xi = float(active_cfg.get("ei_xi", 0.01))
-    surrogate_type = str(active_cfg.get("surrogate_type", "gp"))
 
     surrogate_kwargs = dict(active_cfg.get("surrogate", {}))
-    surrogate_kwargs.setdefault("max_length", int(env_cfg["max_length"]))
-    surrogate_kwargs.setdefault("device", device)
+    surrogate_kwargs = {
+        "max_length": int(env_cfg["max_length"]),
+        "device": device,
+        "fit_maxiter": int(surrogate_kwargs.get("fit_maxiter", 80)),
+    }
 
     states = env.get_random_terminating_states(
         n_states=initial_size,
@@ -117,7 +80,7 @@ def run_active_learning(
         if oracle.remaining_budget <= 0:
             break
 
-        surrogate = build_surrogate(surrogate_type=surrogate_type, **surrogate_kwargs)
+        surrogate = BoTorchGPSurrogate(**surrogate_kwargs)
         train_states = np.asarray(states, dtype=np.int64)
         train_scores = np.asarray(scores, dtype=np.float32)
         surrogate.fit(train_states, train_scores)
@@ -134,16 +97,7 @@ def run_active_learning(
         if this_batch <= 0:
             break
 
-        selected_idx = _select_batch(
-            acquisition=acquisition,
-            mean=mean,
-            std=std,
-            batch_size=this_batch,
-            best_observed=float(np.max(train_scores)),
-            beta=beta,
-            xi=xi,
-            rng=rng,
-        )
+        selected_idx = select_ucb(mean=mean, std=std, batch_size=this_batch, beta=beta)
         selected_states = candidate_matrix[selected_idx].tolist()
         queried_scores = (
             oracle(np.asarray(selected_states, dtype=np.int64)).detach().cpu().numpy().tolist()
@@ -203,8 +157,8 @@ def run_active_learning(
         "curve": curve,
         "round_logs": round_logs,
         "surrogate_path": str(surrogate_path) if surrogate is not None else None,
-        "acquisition": acquisition,
-        "surrogate_type": surrogate_type,
+        "acquisition": "ucb",
+        "surrogate_type": "gp",
         "scores": [float(s) for s in scores],
     }
 

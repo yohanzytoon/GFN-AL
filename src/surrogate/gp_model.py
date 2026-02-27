@@ -81,15 +81,21 @@ class BoTorchGPSurrogate:
         y = np.asarray(targets, dtype=np.float32).reshape(-1, 1)
 
         if self.backend == "botorch":
-            train_x = torch.tensor(x, dtype=torch.float32, device=self.device)
-            train_y = torch.tensor(y, dtype=torch.float32, device=self.device)
+            train_x = torch.tensor(x, dtype=torch.float64, device=self.device)
+            train_y = torch.tensor(y, dtype=torch.float64, device=self.device)
             self._train_x = train_x
             self._train_y = train_y
             self._x_mean = train_x.mean(dim=0, keepdim=True)
             self._x_std = train_x.std(dim=0, keepdim=True).clamp_min(1e-6)
             self._build_botorch()
             assert self._mll is not None
-            fit_gpytorch_mll(self._mll, optimizer_kwargs={"maxiter": self.fit_maxiter})
+            try:
+                fit_gpytorch_mll(
+                    self._mll,
+                    optimizer_kwargs={"options": {"maxiter": self.fit_maxiter}},
+                )
+            except TypeError:
+                fit_gpytorch_mll(self._mll, optimizer_kwargs={"maxiter": self.fit_maxiter})
             self._model.eval()
         else:
             kernel = RBF(length_scale=1.0) + WhiteKernel(noise_level=1e-2)
@@ -110,7 +116,7 @@ class BoTorchGPSurrogate:
 
         if self.backend == "botorch":
             assert self._model is not None and self._x_mean is not None and self._x_std is not None
-            x_tensor = torch.tensor(x, dtype=torch.float32, device=self.device)
+            x_tensor = torch.tensor(x, dtype=torch.float64, device=self.device)
             x_norm = (x_tensor - self._x_mean) / self._x_std
             with torch.no_grad():
                 posterior = self._model.posterior(x_norm)
@@ -179,10 +185,10 @@ class BoTorchGPSurrogate:
         )
         model.backend = str(payload["backend"])
         if model.backend == "botorch":
-            model._train_x = payload["train_x"].to(model.device)
-            model._train_y = payload["train_y"].to(model.device)
-            model._x_mean = payload["x_mean"].to(model.device)
-            model._x_std = payload["x_std"].to(model.device)
+            model._train_x = payload["train_x"].to(model.device, dtype=torch.float64)
+            model._train_y = payload["train_y"].to(model.device, dtype=torch.float64)
+            model._x_mean = payload["x_mean"].to(model.device, dtype=torch.float64)
+            model._x_std = payload["x_std"].to(model.device, dtype=torch.float64)
             model._build_botorch()
             assert model._model is not None
             model._model.load_state_dict(payload["state_dict"])

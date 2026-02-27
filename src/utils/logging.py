@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import logging as pylogging
 import random
@@ -11,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
 import torch
 
 
@@ -21,13 +21,10 @@ class LoggingConfig:
 
     output_dir: Path
     run_name: str
-    use_wandb: bool = False
-    wandb_project: str = "gfn-active-learning"
-    wandb_entity: str | None = None
 
 
 class ExperimentLogger:
-    """Structured logger that writes tabular metrics and optional WandB logs."""
+    """Structured logger that writes local files only."""
 
     def __init__(self, config: LoggingConfig):
         self.config = config
@@ -44,21 +41,6 @@ class ExperimentLogger:
         )
         self._logger.addHandler(file_handler)
 
-        self._wandb = None
-        if config.use_wandb:
-            try:
-                import wandb
-
-                self._wandb = wandb
-                self._wandb.init(
-                    project=config.wandb_project,
-                    entity=config.wandb_entity,
-                    name=config.run_name,
-                    dir=str(self.output_dir),
-                )
-            except Exception as exc:  # pragma: no cover - optional dependency path
-                self._logger.warning("WandB disabled due to import/init failure: %s", exc)
-
     def info(self, message: str) -> None:
         """Log free-form informational message."""
         self._logger.info(message)
@@ -72,17 +54,19 @@ class ExperimentLogger:
         }
         self._records.append(payload)
         self._logger.info("step=%s metrics=%s", step, metrics)
-        if self._wandb is not None:
-            self._wandb.log(metrics, step=step)
-
-    def to_frame(self) -> pd.DataFrame:
-        """Return logged metrics as a DataFrame."""
-        return pd.DataFrame(self._records)
 
     def dump_metrics(self, filename: str = "metrics.csv") -> Path:
         """Persist tabular metrics to disk."""
         path = self.output_dir / filename
-        self.to_frame().to_csv(path, index=False)
+        if not self._records:
+            path.write_text("", encoding="utf-8")
+            return path
+
+        fieldnames = list(self._records[0].keys())
+        with path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(self._records)
         return path
 
     def dump_summary(self, summary: dict[str, Any], filename: str = "summary.json") -> Path:
@@ -90,14 +74,11 @@ class ExperimentLogger:
         path = self.output_dir / filename
         with path.open("w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
-        if self._wandb is not None:
-            self._wandb.summary.update(summary)
         return path
 
     def close(self) -> None:
         """Finalize logger resources."""
-        if self._wandb is not None:
-            self._wandb.finish()
+        return None
 
 
 def set_global_seed(seed: int) -> None:

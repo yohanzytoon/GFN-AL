@@ -31,9 +31,6 @@ def main(cfg):
         LoggingConfig(
             output_dir=run_dir,
             run_name=f"baseline_seed_{cfg_dict['seed']}",
-            use_wandb=bool(cfg_dict["logging"].get("use_wandb", False)),
-            wandb_project=str(cfg_dict["logging"].get("wandb_project", "gfn-active-learning")),
-            wandb_entity=cfg_dict["logging"].get("wandb_entity"),
         )
     )
     result = run_supervised_baseline(cfg_dict, output_dir=run_dir, logger=logger)

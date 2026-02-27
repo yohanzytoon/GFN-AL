@@ -15,16 +15,13 @@ from gflownet.proxy.base import Proxy
 from gflownet.proxy.scrabble import ScrabbleScorer
 from gflownet.utils.common import tfloat
 
-from surrogate import load_surrogate
-
 
 class OracleProxy(Proxy):
     """
     Proxy wrapper around Scrabble oracle scoring with query-budget enforcement.
 
-    The proxy supports two backends:
-    - ``oracle``: calls :class:`gflownet.proxy.scrabble.ScrabbleScorer`
-    - ``surrogate``: loads and evaluates a persisted surrogate checkpoint
+    The proxy only exposes the oracle-backed scoring path retained for the
+    preliminary milestone.
     """
 
     def __init__(
@@ -39,16 +36,12 @@ class OracleProxy(Proxy):
         oracle_budget: int | None = None,
         enforce_budget: bool = True,
         vocabulary_check: bool = False,
-        backend: str = "oracle",
-        surrogate_checkpoint: str | None = None,
         stats_output_path: str | None = None,
         **kwargs: Any,
     ):
         self.oracle_budget = oracle_budget
         self.enforce_budget = enforce_budget
         self.vocabulary_check = vocabulary_check
-        self.backend = backend
-        self.surrogate_checkpoint = surrogate_checkpoint
         self.stats_output_path = Path(stats_output_path) if stats_output_path else None
 
         self.call_count = 0
@@ -79,7 +72,6 @@ class OracleProxy(Proxy):
             reward_min=0.0,
             do_clip_rewards=False,
         )
-        self.surrogate = None
 
     @property
     def remaining_budget(self) -> int | float:
@@ -92,8 +84,6 @@ class OracleProxy(Proxy):
         """Set up proxy with environment information."""
         self._env = env
         self.oracle_scorer.setup(env)
-        if self.backend == "surrogate":
-            self._load_surrogate()
 
     def reset_tracking(self) -> None:
         """Reset call counters and history."""
@@ -107,22 +97,11 @@ class OracleProxy(Proxy):
     ) -> TensorType["batch"]:
         """Return proxy scores for a batch of states."""
         n_queries = self._batch_size(states)
-        if self.backend == "oracle":
-            self._check_budget(n_queries)
-            scores = self.oracle_scorer(states)
-            scores_tensor = tfloat(scores, device=self.device, float_type=self.float)
-            self._record_calls(n_queries=n_queries, scores=scores_tensor)
-            return scores_tensor
-
-        if self.backend == "surrogate":
-            self._load_surrogate()
-            state_matrix = self._states_to_matrix(states)
-            mean, _ = self.surrogate.predict(state_matrix, return_std=True)
-            return tfloat(mean, device=self.device, float_type=self.float)
-
-        raise ValueError(
-            f"Unsupported backend '{self.backend}'. Expected 'oracle' or 'surrogate'."
-        )
+        self._check_budget(n_queries)
+        scores = self.oracle_scorer(self._prepare_oracle_states(states))
+        scores_tensor = tfloat(scores, device=self.device, float_type=self.float)
+        self._record_calls(n_queries=n_queries, scores=scores_tensor)
+        return scores_tensor
 
     def _check_budget(self, n_queries: int) -> None:
         if self.oracle_budget is None or self.oracle_budget < 0:
@@ -165,7 +144,7 @@ class OracleProxy(Proxy):
             return
         self.stats_output_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "backend": self.backend,
+            "backend": "oracle",
             "call_count": int(self.call_count),
             "batch_count": int(self.batch_count),
             "oracle_budget": self.oracle_budget,
@@ -174,15 +153,6 @@ class OracleProxy(Proxy):
         }
         with self.stats_output_path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
-
-    def _load_surrogate(self) -> None:
-        if self.surrogate is not None:
-            return
-        if not self.surrogate_checkpoint:
-            raise ValueError(
-                "backend='surrogate' requires surrogate_checkpoint to be provided."
-            )
-        self.surrogate = load_surrogate(self.surrogate_checkpoint, device=str(self.device))
 
     def _batch_size(self, states: TensorType | list | npt.NDArray) -> int:
         if torch.is_tensor(states):
@@ -197,51 +167,26 @@ class OracleProxy(Proxy):
             return len(states)
         raise TypeError(f"Unsupported state container type: {type(states)}")
 
-    def _states_to_matrix(self, states: TensorType | list | npt.NDArray) -> np.ndarray:
+    def _prepare_oracle_states(
+        self, states: TensorType | list | npt.NDArray
+    ) -> TensorType | list:
+        """Convert numeric state batches to the tensor format expected by ScrabbleScorer."""
         if torch.is_tensor(states):
-            matrix = states.detach().cpu().numpy()
-        elif isinstance(states, np.ndarray):
-            matrix = states
-        elif isinstance(states, list):
-            if len(states) == 0:
-                if self._env is None:
-                    return np.zeros((0, 0), dtype=np.int64)
-                return np.zeros((0, self._env.max_length), dtype=np.int64)
+            return states.to(device=self.device, dtype=torch.long)
+
+        if isinstance(states, np.ndarray):
+            return torch.as_tensor(states, device=self.device, dtype=torch.long)
+
+        if isinstance(states, list):
+            if not states:
+                return torch.empty((0, 0), device=self.device, dtype=torch.long)
             first = states[0]
             if isinstance(first, str):
-                if self._env is None:
-                    raise RuntimeError("String state inputs require proxy.setup(env).")
-                matrix = np.asarray(
-                    [self._env.readable2state(self._to_readable(item)) for item in states],
-                    dtype=np.int64,
-                )
-            elif isinstance(first, (list, tuple, np.ndarray)):
+                return states
+            if isinstance(first, (list, tuple, np.ndarray)):
                 if len(first) > 0 and isinstance(first[0], str):
-                    if self._env is None:
-                        raise RuntimeError("Token list inputs require proxy.setup(env).")
-                    matrix = np.asarray(
-                        [self._tokens_to_indices(item) for item in states], dtype=np.int64
-                    )
-                else:
-                    matrix = np.asarray(states, dtype=np.int64)
-            else:
-                raise TypeError(f"Unsupported list state element type: {type(first)}")
-        else:
-            raise TypeError(f"Unsupported state container type: {type(states)}")
+                    return states
+            matrix = np.asarray(states, dtype=np.int64)
+            return torch.as_tensor(matrix, device=self.device, dtype=torch.long)
 
-        if matrix.ndim == 1:
-            matrix = matrix.reshape(1, -1)
-        return matrix
-
-    def _to_readable(self, item: str) -> str:
-        text = item.strip()
-        if " " in text:
-            return text
-        return " ".join(list(text.upper()))
-
-    def _tokens_to_indices(self, tokens: list[str] | tuple[str, ...]) -> list[int]:
-        assert self._env is not None
-        values = [self._env.token2idx[token.upper()] for token in tokens]
-        if len(values) < self._env.max_length:
-            values = values + [self._env.pad_idx] * (self._env.max_length - len(values))
-        return values[: self._env.max_length]
+        raise TypeError(f"Unsupported state container type: {type(states)}")
