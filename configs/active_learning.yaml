@@ -3,6 +3,7 @@ device: cpu
 
 env:
   max_length: 7
+  num_tokens: 27
 
 oracle:
   budget: 1000
@@ -17,6 +18,9 @@ active:
   batch_size: 16
   candidate_pool_size: 512
   max_rounds: 80
+  sampling_strategy: uniform
+  candidate_unique: true
+  min_length: 3
   acquisition_beta: 2.0
   surrogate:
     fit_maxiter: 80

@@ -12,6 +12,7 @@ from acquisition.ucb import select_ucb
 from environments.scrabble_oracle_env import ScrabbleOracleEnv
 from proxies.oracle_proxy import OracleProxy
 from surrogate.gp_model import BoTorchGPSurrogate
+from training.dataset import deduplicate_state_scores, sample_terminating_states
 from utils.logging import ExperimentLogger, set_global_seed
 from utils.metrics import (
     build_query_curve,
@@ -63,13 +64,21 @@ def run_active_learning(
     surrogate_kwargs = {
         "max_length": int(env_cfg["max_length"]),
         "device": device,
+        "num_tokens": int(env_cfg.get("num_tokens", 27)),
         "fit_maxiter": int(surrogate_kwargs.get("fit_maxiter", 80)),
     }
 
-    states = env.get_random_terminating_states(
-        n_states=initial_size,
-        unique=False,
-        max_attempts=max(5 * initial_size, 1000),
+    sampling_strategy = str(active_cfg.get("sampling_strategy", "uniform"))
+    min_length = int(active_cfg.get("min_length", 3))
+    candidate_unique = bool(active_cfg.get("candidate_unique", True))
+
+    states = sample_terminating_states(
+        env,
+        initial_size,
+        sampling_strategy=sampling_strategy,
+        min_length=min_length,
+        unique=True,
+        seed=seed,
     )
     scores = oracle(env.states2proxy(states)).detach().cpu().numpy().astype(float).tolist()
 
@@ -81,16 +90,41 @@ def run_active_learning(
             break
 
         surrogate = BoTorchGPSurrogate(**surrogate_kwargs)
-        train_states = np.asarray(states, dtype=np.int64)
-        train_scores = np.asarray(scores, dtype=np.float32)
+        train_states, train_scores = deduplicate_state_scores(states, scores)
         surrogate.fit(train_states, train_scores)
 
-        candidate_states = env.get_random_terminating_states(
-            n_states=candidate_pool_size,
-            unique=False,
-            max_attempts=max(5 * candidate_pool_size, 1000),
+        candidate_states = sample_terminating_states(
+            env,
+            candidate_pool_size,
+            sampling_strategy=sampling_strategy,
+            min_length=min_length,
+            unique=candidate_unique,
+            seed=seed + round_idx + 1,
         )
-        candidate_matrix = np.asarray(candidate_states, dtype=np.int64)
+        seen_states = {tuple(int(x) for x in state) for state in states}
+        filtered_candidates = [
+            state for state in candidate_states if tuple(int(x) for x in state) not in seen_states
+        ]
+        if len(filtered_candidates) < batch_size:
+            filtered_candidates.extend(
+                sample_terminating_states(
+                    env,
+                    candidate_pool_size,
+                    sampling_strategy="uniform",
+                    min_length=min_length,
+                    unique=False,
+                    seed=seed + 10_000 + round_idx,
+                )
+            )
+            filtered_candidates = [
+                state
+                for state in filtered_candidates
+                if tuple(int(x) for x in state) not in seen_states
+            ]
+
+        candidate_matrix = np.asarray(filtered_candidates, dtype=np.int64)
+        if candidate_matrix.size == 0:
+            break
         mean, std = surrogate.predict(candidate_matrix, return_std=True)
 
         this_batch = int(min(batch_size, oracle.remaining_budget, candidate_matrix.shape[0]))
@@ -159,6 +193,7 @@ def run_active_learning(
         "surrogate_path": str(surrogate_path) if surrogate is not None else None,
         "acquisition": "ucb",
         "surrogate_type": "gp",
+        "sampling_strategy": sampling_strategy,
         "scores": [float(s) for s in scores],
     }
 
