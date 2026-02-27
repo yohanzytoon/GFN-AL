@@ -1,22 +1,16 @@
 # Core
 numpy>=1.26.4,<2.0.0
-pandas>=2.0.0
 scipy>=1.11.2
 scikit-learn>=1.3.0
-matplotlib>=3.8.0
 hydra-core>=1.3.2
+matplotlib>=3.8.0
 tqdm>=4.66.0
 
 # ML
 torch==2.5.1
+torchtyping>=0.1.5
 botorch>=0.10.0
 gpytorch>=1.11
 
-# Optional logging
-wandb>=0.15.11
-
 # Testing
 pytest>=7.4.2
-
-# Official GFlowNet library (local clone)
--e ../gflownet

@@ -1,311 +1,88 @@
-# GFlowNets + Active Learning for Sample-Efficient Exploration
+# Preliminary Milestone Repo
 
-Production-ready research repository for comparing:
-- Random search
-- Supervised baseline
-- Pure GFlowNet (oracle reward)
-- Pure active learning (surrogate + acquisition)
-- Hybrid: GFlowNet generation + surrogate filtering + oracle evaluation
+This branch is now restricted to the preliminary scope only:
+- generate a dataset with the official Scrabble environment
+- train a supervised baseline on a saved random oracle-labeled dataset
+- run one standard active-learning loop (GP surrogate + UCB)
 
-Search space: Scrabble-like sequences via the official `gflownet` Scrabble environment.
+Everything beyond that scope has been removed from this repo.
 
-## Repository Layout
+## What Remains
 
-```text
-gfn_active_learning_project/
-├── README.md
-├── requirements.txt
-├── setup.py
-├── configs/
-│   ├── baseline.yaml
-│   ├── active_learning.yaml
-│   ├── hybrid.yaml
-│   └── experiments/
-│       ├── gflownet_scrabble.yaml
-│       ├── hybrid_scrabble.yaml
-│       ├── comparisons.yaml
-│       └── ablations.yaml
-├── src/
-│   ├── environments/
-│   │   └── scrabble_oracle_env.py
-│   ├── proxies/
-│   │   └── oracle_proxy.py
-│   ├── surrogate/
-│   │   ├── gp_model.py
-│   │   ├── deep_ensemble.py
-│   │   └── bnn.py
-│   ├── acquisition/
-│   │   ├── ucb.py
-│   │   ├── ei.py
-│   │   └── thompson.py
-│   ├── training/
-│   │   ├── train_baseline.py
-│   │   ├── train_active.py
-│   │   └── train_hybrid.py
-│   └── utils/
-│       ├── metrics.py
-│       ├── logging.py
-│       └── visualization.py
-├── experiments/
-│   ├── run_baseline.py
-│   ├── run_active.py
-│   ├── run_hybrid.py
-│   ├── run_comparisons.py
-│   ├── run_ablations.py
-│   └── export_publication_tables.py
-└── tests/
-```
+- `experiments/run_baseline.py`
+- `experiments/run_dataset.py`
+- `experiments/run_active.py`
+- `src/training/dataset.py`
+- `src/training/train_baseline.py`
+- `src/training/train_active.py`
+- `src/environments/scrabble_oracle_env.py`
+- `src/proxies/oracle_proxy.py`
+- `src/surrogate/gp_model.py`
+- `src/acquisition/ucb.py`
 
-## Official GFlowNet Integration
+## Required External Dependency
 
-This project extends the official library directly:
-- Environment: `gflownet.envs.scrabble.Scrabble` (extended in `ScrabbleOracleEnv`)
-- Proxy: `gflownet.proxy.base.Proxy` (extended in `OracleProxy`)
-- Agent: official `GFlowNetAgent` from `gflownet.gflownet`
-- Hydra workflow: official `train.py`, `eval.py`, `resume.py` are called from `src/training/train_hybrid.py`
-- Losses: `trajectorybalance`, `flowmatch`, `detailedbalance`
+The Scrabble environment and Scrabble scorer still come from the official repo:
 
-## Installation
+- `https://github.com/alexhernandezgarcia/gflownet`
 
-### 1) Python environment
+This project expects that repository as a sibling checkout at `../gflownet`.
 
 ```bash
-cd gfn_active_learning_project
-python3 -m venv .venv
+cd /Users/youhannazytoon/gflownet
+git -C gflownet remote add upstream https://github.com/alexhernandezgarcia/gflownet.git
+git -C gflownet remote -v
+```
+
+## Setup
+
+Use Python `3.11` or `3.12`.
+
+```bash
+cd /Users/youhannazytoon/gflownet/GFN-AL
+python3.11 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
-### 2) Install official GFlowNet repo
+## What To Run
 
-This project expects the official clone at `../gflownet` relative to this directory.
+Dataset generation:
 
 ```bash
-# from gfn_active_learning_project/
-pip install -e ../gflownet
+python experiments/run_dataset.py
 ```
 
-### 3) Install this project
+Baseline:
 
 ```bash
-pip install -r requirements.txt
-pip install -e .
+python experiments/run_baseline.py dataset.path=outputs/dataset/<run_dir>/dataset.npz
 ```
 
-Optional convenience commands:
-
-```bash
-make compare
-make ablate
-make tables RUN_DIR=outputs/comparisons/<run_id>
-```
-
-## Running Experiments
-
-### Config 1: Supervised baseline
-
-```bash
-python experiments/run_baseline.py
-```
-
-Override examples:
-
-```bash
-python experiments/run_baseline.py seed=1 oracle.budget=500 env.max_length=7
-```
-
-### Config 2: Pure GFlowNet (official train/eval workflow)
-
-Pure GFlowNet is run through `experiments/run_comparisons.py` with `method=pure_gflownet` or through direct API usage in `src/training/train_hybrid.py:run_pure_gflownet`.
-
-Minimal command:
-
-```bash
-python experiments/run_comparisons.py comparison.methods=[pure_gflownet] comparison.seeds=[0]
-```
-
-Direct official training CLI (from `../gflownet`):
-
-```bash
-PYTHONPATH=../gfn_active_learning_project/src:$PYTHONPATH \
-python train.py env=scrabble_oracle proxy=oracle_proxy gflownet=trajectorybalance loss=trajectorybalance policy=mlp_trajectorybalance
-```
-
-### Config 3: Active learning
+Active learning:
 
 ```bash
 python experiments/run_active.py
 ```
 
-Acquisition overrides:
+Short smoke runs:
 
 ```bash
-python experiments/run_active.py active.acquisition=ei
-python experiments/run_active.py active.acquisition=thompson
-python experiments/run_active.py active.acquisition=uncertainty
+python experiments/run_dataset.py oracle.budget=40 dataset.num_queries=40
+python experiments/run_baseline.py dataset.path=outputs/dataset/<run_dir>/dataset.npz baseline.epochs=5
+python experiments/run_active.py oracle.budget=40 active.initial_size=10 active.batch_size=5 active.max_rounds=4 active.candidate_pool_size=32 active.surrogate.fit_maxiter=10
 ```
 
-Surrogate overrides:
+`run_baseline.py` no longer samples data on its own. It expects a saved `.npz`
+dataset produced by `run_dataset.py`.
 
-```bash
-python experiments/run_active.py active.surrogate_type=gp
-python experiments/run_active.py active.surrogate_type=deep_ensemble
-python experiments/run_active.py active.surrogate_type=bnn
-```
+## Current Preliminary Evidence
 
-### Config 4: Hybrid (GFlowNet + Active Learning)
+One baseline run has already succeeded locally and produced:
+- best score: `11.0`
+- top-10 average score: `8.0`
+- valid word ratio: `0.041`
 
-```bash
-python experiments/run_hybrid.py
-```
-
-Key overrides:
-
-```bash
-python experiments/run_hybrid.py active.surrogate_type=gp active.acquisition=ucb
-python experiments/run_hybrid.py gflownet.objective=flowmatch
-python experiments/run_hybrid.py gflownet.objective=detailedbalance
-python experiments/run_hybrid.py hybrid.retrain_frequency=1
-```
-
-## Resume and Evaluate Official GFlowNet Runs
-
-The training module exposes wrappers for the official scripts:
-- `run_gflownet_train(...)` -> `gflownet/train.py`
-- `run_gflownet_eval(...)` -> `gflownet/eval.py`
-- `run_gflownet_resume(...)` -> `gflownet/resume.py`
-
-Resume a prior run programmatically:
-
-```python
-from pathlib import Path
-from training.train_hybrid import run_gflownet_resume
-
-run_gflownet_resume(
-    repo_root=Path("../gflownet").resolve(),
-    project_src=Path("src").resolve(),
-    rundir=Path("outputs/hybrid/.../gflownet_runs/round_000").resolve(),
-    device="cpu",
-    seed=0,
-)
-```
-
-## Full Comparison + Statistical Tests
-
-Run all methods with multi-seed comparison:
-
-```bash
-python experiments/run_comparisons.py
-```
-
-Outputs:
-- `comparison_results.csv`
-- `method_summary.csv` (mean/std/95% CI by method)
-- `curve_statistics.csv` (query-wise mean/lower/upper for each method)
-- `pairwise_tests.json` (paired t-test + Wilcoxon + Cohen's d)
-- `best_vs_queries_ci.png`
-- `top10_vs_queries_ci.png`
-- `regret_vs_queries_ci.png`
-
-## Reproducing Main Figures
-
-```bash
-python experiments/run_comparisons.py comparison.seeds=[0,1,2,3,4]
-```
-
-Figures are generated in the Hydra run directory under `outputs/comparisons/...`:
-- `best_vs_queries_ci.png`
-- `top10_vs_queries_ci.png`
-- `regret_vs_queries_ci.png`
-
-## Ablation Sweeps
-
-### Acquisition function
-
-```bash
-python experiments/run_comparisons.py comparison.methods=[active_learning,hybrid] base_config.active.acquisition=ucb
-python experiments/run_comparisons.py comparison.methods=[active_learning,hybrid] base_config.active.acquisition=ei
-python experiments/run_comparisons.py comparison.methods=[active_learning,hybrid] base_config.active.acquisition=thompson
-```
-
-### Surrogate type
-
-```bash
-python experiments/run_comparisons.py base_config.active.surrogate_type=gp
-python experiments/run_comparisons.py base_config.active.surrogate_type=deep_ensemble
-python experiments/run_comparisons.py base_config.active.surrogate_type=bnn
-```
-
-### GFlowNet temperature
-
-```bash
-python experiments/run_comparisons.py base_config.gflownet.temperature_logits=0.7
-python experiments/run_comparisons.py base_config.gflownet.temperature_logits=1.0
-python experiments/run_comparisons.py base_config.gflownet.temperature_logits=1.5
-```
-
-### Batch size K
-
-```bash
-python experiments/run_comparisons.py base_config.active.batch_size=8
-python experiments/run_comparisons.py base_config.active.batch_size=16
-python experiments/run_comparisons.py base_config.active.batch_size=32
-```
-
-### Initial dataset size
-
-```bash
-python experiments/run_comparisons.py base_config.active.initial_size=32
-python experiments/run_comparisons.py base_config.active.initial_size=64
-python experiments/run_comparisons.py base_config.active.initial_size=128
-```
-
-### Hybrid retrain frequency
-
-```bash
-python experiments/run_comparisons.py base_config.hybrid.retrain_frequency=1
-python experiments/run_comparisons.py base_config.hybrid.retrain_frequency=2
-python experiments/run_comparisons.py base_config.hybrid.retrain_frequency=4
-```
-
-## Dedicated Ablation Runner
-
-```bash
-python experiments/run_ablations.py
-```
-
-Outputs:
-- `ablation_results.csv`
-- `ablation_summary.csv`
-- `ablation_<sweep_name>_best_score.png`
-
-## Export Paper Tables
-
-After a comparisons run, export LaTeX/Markdown tables directly:
-
-```bash
-python experiments/export_publication_tables.py --run-dir outputs/comparisons/<run_id>
-```
-
-Outputs:
-- `tables/table_method_summary.tex`
-- `tables/table_method_summary.md`
-- `tables/table_pairwise_tests.tex`
-- `tables/table_pairwise_tests.md`
-
-## Tests
-
-```bash
-pytest -q
-```
-
-## Publication Workflow
-
-Use `PUBLICATION_ROADMAP.md` for the end-to-end checklist from experiment execution to paper-ready tables/figures.
-
-## Notes
-
-- Oracle budgets are strictly enforced by `OracleProxy` in oracle mode.
-- Hybrid retrains GFlowNet with surrogate rewards while preserving official GFlowNet training code.
-- WandB logging is optional and disabled by default.
-- Vocabulary validity checks are enabled by default (`oracle.vocabulary_check=true`) for publication-grade validity metrics.
+This is enough for the current methods/preliminary-results milestone.

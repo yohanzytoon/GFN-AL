@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: install test compare ablate tables
+.PHONY: install test dataset baseline active
 
 install:
 	$(PYTHON) -m pip install --upgrade pip
@@ -10,12 +10,11 @@ install:
 test:
 	$(PYTHON) -m pytest -q
 
-compare:
-	$(PYTHON) experiments/run_comparisons.py
+dataset:
+	$(PYTHON) experiments/run_dataset.py
 
-ablate:
-	$(PYTHON) experiments/run_ablations.py
+baseline:
+	$(PYTHON) experiments/run_baseline.py
 
-# Usage: make tables RUN_DIR=outputs/comparisons/<run_id>
-tables:
-	$(PYTHON) experiments/export_publication_tables.py --run-dir $(RUN_DIR)
+active:
+	$(PYTHON) experiments/run_active.py
