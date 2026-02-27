@@ -8,13 +8,16 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from training.dataset import load_dataset
+from training.dataset import deduplicate_state_scores, load_dataset
 from utils.logging import ExperimentLogger, set_global_seed
 from utils.metrics import regression_metrics, search_quality_metrics
 
 
-class _MLPRegressor(nn.Module):
+class _BaselineNet(nn.Module):
+    """Simple shared-trunk model for validity and score prediction."""
+
     def __init__(self, input_dim: int, hidden_dim: int, n_layers: int, dropout: float):
         super().__init__()
         layers: list[nn.Module] = []
@@ -22,11 +25,15 @@ class _MLPRegressor(nn.Module):
         for _ in range(n_layers):
             layers.extend([nn.Linear(dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout)])
             dim = hidden_dim
-        layers.append(nn.Linear(dim, 1))
-        self.net = nn.Sequential(*layers)
+        self.backbone = nn.Sequential(*layers) if layers else nn.Identity()
+        self.validity_head = nn.Linear(dim, 1)
+        self.score_head = nn.Linear(dim, 1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        hidden = self.backbone(x)
+        validity_logits = self.validity_head(hidden)
+        score_pred = F.softplus(self.score_head(hidden))
+        return validity_logits, score_pred
 
 
 def _states_to_features(states: np.ndarray, num_tokens: int) -> np.ndarray:
@@ -35,6 +42,87 @@ def _states_to_features(states: np.ndarray, num_tokens: int) -> np.ndarray:
         states = states.reshape(1, -1)
     onehot = np.eye(num_tokens, dtype=np.float32)[states]
     return onehot.reshape(states.shape[0], -1)
+
+
+def _train_val_split(
+    targets: np.ndarray,
+    train_fraction: float,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Create a stable split that preserves positive examples when possible."""
+    positives = np.flatnonzero(targets > 0)
+    negatives = np.flatnonzero(targets <= 0)
+
+    if positives.size < 2 or negatives.size < 2:
+        perm = rng.permutation(targets.shape[0])
+        n_train = int(targets.shape[0] * train_fraction)
+        n_train = max(1, min(n_train, targets.shape[0] - 1))
+        return perm[:n_train], perm[n_train:]
+
+    pos_perm = rng.permutation(positives)
+    neg_perm = rng.permutation(negatives)
+
+    n_train_pos = int(np.ceil(pos_perm.size * train_fraction))
+    n_train_neg = int(np.ceil(neg_perm.size * train_fraction))
+    n_train_pos = max(1, min(n_train_pos, pos_perm.size - 1))
+    n_train_neg = max(1, min(n_train_neg, neg_perm.size - 1))
+
+    train_idx = np.concatenate([pos_perm[:n_train_pos], neg_perm[:n_train_neg]])
+    val_idx = np.concatenate([pos_perm[n_train_pos:], neg_perm[n_train_neg:]])
+    return rng.permutation(train_idx), rng.permutation(val_idx)
+
+
+def _forward_predictions(
+    model: _BaselineNet,
+    x: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return validity probability, score-if-valid, and final score prediction."""
+    validity_logits, score_pred = model(x)
+    validity_prob = torch.sigmoid(validity_logits)
+    final_pred = validity_prob * score_pred
+    return validity_prob, score_pred, final_pred
+
+
+def _batch_loss(
+    model: _BaselineNet,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    bce: nn.Module,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute baseline loss and final prediction."""
+    validity_logits, score_pred = model(x)
+    validity_targets = (y > 0).float()
+
+    loss_validity = bce(validity_logits, validity_targets)
+    if validity_targets.sum().item() > 0:
+        loss_score = (((score_pred - y) ** 2) * validity_targets).sum() / validity_targets.sum()
+    else:
+        loss_score = torch.zeros((), device=y.device)
+
+    final_pred = torch.sigmoid(validity_logits) * score_pred
+    return loss_validity + loss_score, final_pred
+
+
+def _validity_metrics(targets: np.ndarray, probs: np.ndarray) -> dict[str, float]:
+    """Compute simple classification metrics for valid-word detection."""
+    target_pos = targets > 0
+    pred_pos = probs >= 0.5
+
+    tp = int(np.logical_and(target_pos, pred_pos).sum())
+    tn = int(np.logical_and(~target_pos, ~pred_pos).sum())
+    fp = int(np.logical_and(~target_pos, pred_pos).sum())
+    fn = int(np.logical_and(target_pos, ~pred_pos).sum())
+
+    precision = tp / max(tp + fp, 1)
+    recall = tp / max(tp + fn, 1)
+    f1 = 2.0 * precision * recall / max(precision + recall, 1e-8)
+    accuracy = (tp + tn) / max(targets.shape[0], 1)
+    return {
+        "accuracy": float(accuracy),
+        "precision": float(precision),
+        "recall": float(recall),
+        "f1": float(f1),
+    }
 
 
 def run_supervised_baseline(
@@ -63,6 +151,7 @@ def run_supervised_baseline(
         )
 
     states_np, targets = load_dataset(dataset_path)
+    states_np, targets = deduplicate_state_scores(states_np, targets)
     if states_np.shape[0] != targets.shape[0]:
         raise ValueError(
             "dataset states and scores have inconsistent lengths: "
@@ -86,21 +175,18 @@ def run_supervised_baseline(
     features = _states_to_features(states_np, num_tokens=num_tokens)
 
     rng = np.random.default_rng(seed)
-    perm = rng.permutation(features.shape[0])
-    n_train = int(features.shape[0] * float(baseline_cfg.get("train_fraction", 0.8)))
-    n_train = max(1, min(n_train, features.shape[0] - 1))
-
-    train_idx = perm[:n_train]
-    val_idx = perm[n_train:]
-    if val_idx.size == 0:
-        val_idx = train_idx.copy()
+    train_idx, val_idx = _train_val_split(
+        targets=targets,
+        train_fraction=float(baseline_cfg.get("train_fraction", 0.8)),
+        rng=rng,
+    )
 
     x_train = torch.tensor(features[train_idx], dtype=torch.float32, device=device)
     y_train = torch.tensor(targets[train_idx], dtype=torch.float32, device=device).view(-1, 1)
     x_val = torch.tensor(features[val_idx], dtype=torch.float32, device=device)
     y_val = torch.tensor(targets[val_idx], dtype=torch.float32, device=device).view(-1, 1)
 
-    model = _MLPRegressor(
+    model = _BaselineNet(
         input_dim=features.shape[1],
         hidden_dim=int(baseline_cfg.get("hidden_dim", 256)),
         n_layers=int(baseline_cfg.get("n_layers", 2)),
@@ -108,9 +194,12 @@ def run_supervised_baseline(
     ).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=float(baseline_cfg.get("lr", 1e-3)))
-    criterion = nn.MSELoss()
     epochs = int(baseline_cfg.get("epochs", 250))
     batch_size = int(baseline_cfg.get("batch_size", 64))
+    positive_weight = float(baseline_cfg.get("positive_weight", 5.0))
+    bce = nn.BCEWithLogitsLoss(
+        pos_weight=torch.tensor([positive_weight], dtype=torch.float32, device=device)
+    )
 
     train_losses: list[float] = []
     val_losses: list[float] = []
@@ -120,31 +209,33 @@ def run_supervised_baseline(
         order = torch.randperm(x_train.shape[0], device=device)
         for start in range(0, x_train.shape[0], batch_size):
             idx = order[start : start + batch_size]
-            pred = model(x_train[idx])
-            loss = criterion(pred, y_train[idx])
+            loss, _ = _batch_loss(model, x_train[idx], y_train[idx], bce)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
         model.eval()
         with torch.no_grad():
-            train_loss = criterion(model(x_train), y_train).item()
-            val_loss = criterion(model(x_val), y_val).item()
-        train_losses.append(train_loss)
-        val_losses.append(val_loss)
+            train_loss, _ = _batch_loss(model, x_train, y_train, bce)
+            val_loss, val_pred = _batch_loss(model, x_val, y_val, bce)
+        train_losses.append(float(train_loss.item()))
+        val_losses.append(float(val_loss.item()))
         if logger is not None and epoch % max(1, epochs // 20) == 0:
             logger.log_metrics(
                 step=epoch,
                 metrics={
-                    "train_loss": float(train_loss),
-                    "val_loss": float(val_loss),
+                    "train_loss": float(train_loss.item()),
+                    "val_loss": float(val_loss.item()),
                 },
             )
 
     with torch.no_grad():
-        val_pred = model(x_val).squeeze(-1).detach().cpu().numpy()
+        val_prob, _, val_pred = _forward_predictions(model, x_val)
+    val_prob_np = val_prob.squeeze(-1).detach().cpu().numpy()
+    val_pred_np = val_pred.squeeze(-1).detach().cpu().numpy()
     val_targets = y_val.squeeze(-1).detach().cpu().numpy()
-    reg_metrics = regression_metrics(val_targets, val_pred)
+    reg_metrics = regression_metrics(val_targets, val_pred_np)
+    validity = _validity_metrics(val_targets, val_prob_np)
 
     model_path = output_dir / "supervised_baseline_model.pt"
     torch.save(model.state_dict(), model_path)
@@ -154,7 +245,10 @@ def run_supervised_baseline(
         "seed": seed,
         **quality,
         "dataset_path": str(Path(dataset_path)),
+        "num_samples": int(states_np.shape[0]),
+        "num_positive_samples": int((targets > 0).sum()),
         "regression": reg_metrics,
+        "validity": validity,
         "model_path": str(model_path),
         "train_loss_final": float(train_losses[-1]),
         "val_loss_final": float(val_losses[-1]),
