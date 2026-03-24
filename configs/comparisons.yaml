@@ -1,0 +1,139 @@
+seeds: [0, 1, 2]
+device: cpu
+float_precision: 32
+gflownet_root: ../gflownet
+
+env:
+  max_length: 7
+  num_tokens: 27
+
+oracle:
+  budget: 1000
+  vocabulary_check: true
+  enforce_budget: true
+
+metrics:
+  optimum_score: null
+
+dataset:
+  num_queries: 1000
+  unique: true
+  sampling_strategy: uniform
+  min_length: 3
+
+baseline:
+  train_fraction: 0.8
+  hidden_dim: 256
+  n_layers: 2
+  dropout: 0.1
+  positive_weight: 5.0
+  lr: 0.001
+  epochs: 200
+  batch_size: 64
+
+active:
+  initial_size: 64
+  batch_size: 16
+  candidate_pool_size: 512
+  max_rounds: 80
+  sampling_strategy: uniform
+  candidate_unique: true
+  min_length: 3
+  acquisition:
+    name: ucb
+    beta: 2.0
+    xi: 0.0
+    thompson_samples: 1
+  surrogate:
+    type: gp
+    fit_maxiter: 80
+    prefer_botorch: true
+    hidden_dim: 256
+    n_layers: 2
+    dropout: 0.1
+    ensemble_size: 5
+    epochs: 75
+    batch_size: 64
+    lr: 0.001
+
+gflownet:
+  n_train_steps: 1500
+  batch_size_forward: 64
+  lr: 0.0001
+  z_dim: 16
+  lr_z_mult: 10.0
+  random_action_prob: 0.05
+  reward_min: 0.0
+  do_clip_rewards: false
+  evaluation_samples: 256
+  policy:
+    hidden_dim: 256
+    n_layers: 3
+    shared_backward: false
+  evaluator:
+    period: 250
+    n: 128
+    checkpoints_period: 250
+
+hybrid:
+  initial_size: 64
+  batch_size: 16
+  candidate_pool_size: 256
+  fallback_random_pool_size: 256
+  max_rounds: 40
+  sampling_strategy: uniform
+  candidate_unique: true
+  min_length: 3
+  acquisition:
+    name: ucb
+    beta: 2.0
+    xi: 0.0
+    thompson_samples: 1
+  surrogate:
+    type: gp
+    fit_maxiter: 80
+    prefer_botorch: true
+    hidden_dim: 256
+    n_layers: 2
+    dropout: 0.1
+    ensemble_size: 5
+    epochs: 75
+    batch_size: 64
+    lr: 0.001
+  gflownet:
+    n_train_steps: 1000
+    batch_size_forward: 64
+    lr: 0.0001
+    z_dim: 16
+    lr_z_mult: 10.0
+    random_action_prob: 0.05
+    reward_min: 0.0001
+    do_clip_rewards: true
+    retrain_every: 1
+    sample_size: 512
+    prediction_mode: mean
+    exploration_beta: 1.0
+    reward_transform: softplus
+    policy:
+      hidden_dim: 256
+      n_layers: 3
+      shared_backward: false
+    evaluator:
+      period: 250
+      n: 128
+      checkpoints_period: 250
+
+comparison:
+  methods: [baseline, active, gflownet, hybrid]
+  metrics: [best_score, top10_score, mean_score, valid_word_ratio, mode_coverage, topk_edit_distance, queries_to_90pct_best]
+  curve_keys: [best, top10]
+  reference_method: hybrid
+
+logging:
+  output_dir: outputs
+
+hydra:
+  run:
+    dir: ${logging.output_dir}/comparisons/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: false
