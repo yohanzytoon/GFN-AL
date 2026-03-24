@@ -1,27 +1,43 @@
-# Preliminary Milestone Repo
+# GFlowNets + Active Learning for Scrabble Exploration
 
-This branch is now restricted to the preliminary scope only:
-- generate a dataset with the official Scrabble environment
-- train a supervised baseline on a saved random oracle-labeled dataset
-- run one standard active-learning loop (GP surrogate + UCB)
+This repository now covers the code-side scope up to Phase 4 of the project:
+- random oracle-labeled dataset generation
+- supervised baseline training
+- active learning with configurable surrogate and acquisition
+- oracle-access GFlowNet training through the upstream `alexhernandezgarcia/gflownet` repo
+- hybrid `surrogate -> GFlowNet -> acquisition -> oracle` training
+- multi-seed comparison and ablation runners
+- result aggregation, confidence-interval curves, and paired statistical tests
 
+## What is in the repo
 
-## What do we have
-
-- `experiments/run_baseline.py`
 - `experiments/run_dataset.py`
+- `experiments/run_baseline.py`
 - `experiments/run_active.py`
+- `experiments/run_gflownet.py`
+- `experiments/run_hybrid.py`
+- `experiments/run_comparisons.py`
+- `experiments/run_ablations.py`
 - `src/training/dataset.py`
 - `src/training/train_baseline.py`
 - `src/training/train_active.py`
+- `src/training/train_gflownet.py`
+- `src/training/train_hybrid.py`
 - `src/environments/scrabble_oracle_env.py`
 - `src/proxies/oracle_proxy.py`
+- `src/proxies/surrogate_proxy.py`
 - `src/surrogate/gp_model.py`
+- `src/surrogate/ensemble_model.py`
 - `src/acquisition/ucb.py`
+- `src/acquisition/ei.py`
+- `src/acquisition/thompson.py`
+- `src/acquisition/uncertainty.py`
+- `src/utils/results.py`
+- `src/utils/visualization.py`
 
 ## Required External Dependency
 
-The Scrabble environment and Scrabble scorer still come from the official repo:
+The Scrabble environment and the upstream GFlowNet training stack come from:
 
 - `https://github.com/alexhernandezgarcia/gflownet`
 
@@ -38,12 +54,11 @@ git -C gflownet remote -v
 Use Python `3.11` or `3.12`.
 
 ```bash
-cd /Users/youhannazytoon/gflownet/GFN-AL
+cd /Users/youhannazytoon/GFN-AL
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m pip install -e .
+python -m pip install -r requirements.txt -e . -e ../gflownet
 ```
 
 ## What To Run
@@ -51,37 +66,60 @@ python -m pip install -e .
 Dataset generation:
 
 ```bash
-python experiments/run_dataset.py
+.venv/bin/python experiments/run_dataset.py
 ```
 
 Baseline:
 
 ```bash
-python experiments/run_baseline.py dataset.path=outputs/dataset/<run_dir>/dataset.npz
+.venv/bin/python experiments/run_baseline.py dataset.path=outputs/dataset/<run_dir>/dataset.npz
 ```
 
 Active learning:
 
 ```bash
-python experiments/run_active.py
+.venv/bin/python experiments/run_active.py
+```
+
+Oracle GFlowNet:
+
+```bash
+.venv/bin/python experiments/run_gflownet.py
+```
+
+Hybrid:
+
+```bash
+.venv/bin/python experiments/run_hybrid.py
+```
+
+Comparisons:
+
+```bash
+.venv/bin/python experiments/run_comparisons.py
+```
+
+Ablations:
+
+```bash
+.venv/bin/python experiments/run_ablations.py
 ```
 
 Short smoke runs:
 
 ```bash
-python experiments/run_dataset.py oracle.budget=40 dataset.num_queries=40
-python experiments/run_baseline.py dataset.path=outputs/dataset/<run_dir>/dataset.npz baseline.epochs=5
-python experiments/run_active.py oracle.budget=40 active.initial_size=10 active.batch_size=5 active.max_rounds=4 active.candidate_pool_size=32 active.surrogate.fit_maxiter=10
+.venv/bin/python experiments/run_dataset.py oracle.budget=40 dataset.num_queries=40
+.venv/bin/python experiments/run_baseline.py dataset.path=outputs/dataset/<run_dir>/dataset.npz baseline.epochs=5
+.venv/bin/python experiments/run_active.py oracle.budget=40 active.initial_size=10 active.batch_size=5 active.max_rounds=4 active.candidate_pool_size=32 active.surrogate.type=ensemble active.surrogate.epochs=3
+.venv/bin/python experiments/run_gflownet.py oracle.budget=40 oracle.vocabulary_check=false gflownet.n_train_steps=10 gflownet.batch_size_forward=4
+.venv/bin/python experiments/run_hybrid.py oracle.budget=40 oracle.vocabulary_check=false hybrid.initial_size=8 hybrid.batch_size=4 hybrid.max_rounds=2 hybrid.gflownet.n_train_steps=5
 ```
 
-`run_baseline.py` no longer samples data on its own. It expects a saved `.npz`
-dataset produced by `run_dataset.py`.
+`run_baseline.py` still expects a saved `.npz` dataset produced by `run_dataset.py`.
 
-## Current Preliminary Evidence
+## Validation Status
 
-One baseline run has already succeeded locally and produced:
-- best score: `11.0`
-- top-10 average score: `8.0`
-- valid word ratio: `0.041`
-
-This is enough for the current methods/preliminary-results milestone.
+- Unit tests: `24 passed`
+- Real smoke runs completed for:
+  - `experiments/run_gflownet.py`
+  - `experiments/run_hybrid.py`
