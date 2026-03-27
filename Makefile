@@ -1,12 +1,11 @@
-PYTHON ?= .venv/bin/python
+PYTHON ?= python3
 
-.PHONY: install test dataset baseline active gflownet hybrid comparisons ablations
+.PHONY: install test dataset baseline active
 
 install:
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install -r requirements.txt
 	$(PYTHON) -m pip install -e .
-	$(PYTHON) -m pip install -e ../gflownet
 
 test:
 	$(PYTHON) -m pytest -q
@@ -19,15 +18,3 @@ baseline:
 
 active:
 	$(PYTHON) experiments/run_active.py
-
-gflownet:
-	$(PYTHON) experiments/run_gflownet.py
-
-hybrid:
-	$(PYTHON) experiments/run_hybrid.py
-
-comparisons:
-	$(PYTHON) experiments/run_comparisons.py
-
-ablations:
-	$(PYTHON) experiments/run_ablations.py

@@ -47,7 +47,6 @@ class OracleProxy(Proxy):
         self.call_count = 0
         self.batch_count = 0
         self.call_history: list[dict[str, Any]] = []
-        self._last_serialized_states: list[Any] = []
         self._env = None
 
         if reward_function_kwargs is None:
@@ -99,7 +98,6 @@ class OracleProxy(Proxy):
         """Return proxy scores for a batch of states."""
         n_queries = self._batch_size(states)
         self._check_budget(n_queries)
-        self._last_serialized_states = self._serialize_states(states)
         scores = self.oracle_scorer(self._prepare_oracle_states(states))
         scores_tensor = tfloat(scores, device=self.device, float_type=self.float)
         self._record_calls(n_queries=n_queries, scores=scores_tensor)
@@ -120,7 +118,6 @@ class OracleProxy(Proxy):
         self.call_count += int(n_queries)
         self.batch_count += 1
         scores_list = [float(x) for x in scores.detach().cpu().tolist()]
-        states_list = list(self._last_serialized_states)
         self.call_history.append(
             {
                 "batch": int(self.batch_count),
@@ -128,14 +125,13 @@ class OracleProxy(Proxy):
                 "score_mean": float(scores.mean().item()) if scores.numel() > 0 else 0.0,
                 "score_max": float(scores.max().item()) if scores.numel() > 0 else 0.0,
                 "scores": scores_list,
-                "states": states_list,
             }
         )
 
         if self._env is not None and hasattr(self._env, "record_oracle_query"):
             try:
                 self._env.record_oracle_query(
-                    states=states_list,
+                    states=[None] * n_queries,
                     rewards=scores_list,
                 )
             except Exception:
@@ -192,35 +188,5 @@ class OracleProxy(Proxy):
                     return states
             matrix = np.asarray(states, dtype=np.int64)
             return torch.as_tensor(matrix, device=self.device, dtype=torch.long)
-
-        raise TypeError(f"Unsupported state container type: {type(states)}")
-
-    def _serialize_states(
-        self, states: TensorType | list | npt.NDArray
-    ) -> list[list[int] | str]:
-        """Convert states into a JSON-serializable representation."""
-        if torch.is_tensor(states):
-            tensor = states.detach().cpu()
-            if tensor.ndim == 1:
-                return [tensor.to(dtype=torch.long).tolist()]
-            return tensor.to(dtype=torch.long).tolist()
-
-        if isinstance(states, np.ndarray):
-            array = np.asarray(states)
-            if array.ndim == 1:
-                return [array.astype(np.int64).tolist()]
-            return array.astype(np.int64).tolist()
-
-        if isinstance(states, list):
-            if not states:
-                return []
-            first = states[0]
-            if isinstance(first, str):
-                return [str(state) for state in states]
-            if isinstance(first, (list, tuple, np.ndarray)):
-                if len(first) > 0 and isinstance(first[0], str):
-                    return [" ".join(sample) for sample in states]
-                return np.asarray(states, dtype=np.int64).tolist()
-            return [states]  # pragma: no cover - defensive
 
         raise TypeError(f"Unsupported state container type: {type(states)}")
