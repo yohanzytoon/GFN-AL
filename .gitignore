@@ -22,3 +22,6 @@ wandb/
 # Local notes / writeups
 DEVOIR4_METHODES_PRELIMINAIRES.tex
 CODEBASE_EXPLANATION.tex
+.vscode/
+pyrightconfig.json
+.venv/
