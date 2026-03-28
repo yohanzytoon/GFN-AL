@@ -19,7 +19,7 @@ import numpy as np
 import torch
 import torch.optim as optim
  
-from gflownet.gfn_model import ScrabbleGFlowNet, featurize_states
+from gfn.gfn_model import ScrabbleGFlowNet, featurize_states
  
  
 # ─────────────────────────────────────────────────────────────────────────────

@@ -23,7 +23,7 @@ from proxies.oracle_proxy import OracleProxy
 from utils.logging import ExperimentLogger, set_global_seed
 from utils.metrics import search_quality_metrics
  
-from gflownet import ScrabbleGFlowNet, train_gfn, sample_candidates
+from gfn import ScrabbleGFlowNet, train_gfn, sample_candidates
  
  
 def run_gfn_pure(

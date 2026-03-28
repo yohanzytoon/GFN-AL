@@ -20,7 +20,7 @@ from utils.metrics import (
     running_best,
     search_quality_metrics,
 )
-from gflownet import ScrabbleGFlowNet, train_gfn, sample_candidates
+from gfn import ScrabbleGFlowNet, train_gfn, sample_candidates
 
 def run_active_learning(
     config: dict[str, Any],
