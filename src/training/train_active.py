@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from acquisition.ucb import select_ucb
+from acquisition.ucb import select_ucb, ucb_scores
 from environments.scrabble_oracle_env import ScrabbleOracleEnv
 from proxies.oracle_proxy import OracleProxy
 from surrogate.gp_model import BoTorchGPSurrogate
@@ -141,7 +141,7 @@ def run_active_learning(
         scores.extend(float(s) for s in queried_scores)
 
         train_pred = surrogate.predict(np.asarray(states, dtype=np.int64), return_std=False)
-        train_metrics = regression_metrics(np.asarray(scores, dtype=float), np.asarray(train_pred, dtype=float))
+        train_metrics = regression_metrics(np.asarray(scores, dtype=float).tolist(), np.asarray(train_pred, dtype=float).tolist())
         round_quality = search_quality_metrics(
             scores=scores,
             states=states,
