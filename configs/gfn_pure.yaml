@@ -1,0 +1,44 @@
+seed: 0
+device: cpu
+ 
+env:
+  max_length: 7
+  num_tokens: 27
+ 
+oracle:
+  # Pas de budget — l'oracle peut être appelé librement
+  budget: null
+  vocabulary_check: true
+ 
+metrics:
+  optimum_score: null
+ 
+# ── Hyperparamètres GFlowNet ──────────────────────────────────────────────
+gfn:
+  # Nombre de trajectoires pour l'entraînement.
+  # Plus élevé qu'en mode hybride car pas de contrainte de budget oracle.
+  # Augmenter pour de meilleurs résultats (ex. 10000 sur GPU Colab).
+  n_steps: 5000
+ 
+  # Learning rate Adam — valeur recommandée par Bengio et al. 2022
+  lr: 0.001
+ 
+  # Architecture du MLP
+  hidden_dim: 256
+  n_layers: 3
+ 
+  # Clamp reward pour garantir R(x) > 0 (exigence Trajectory Balance)
+  reward_min: 0.001
+ 
+  # Nombre de candidats générés après entraînement pour évaluation
+  n_candidates: 512
+ 
+logging:
+  output_dir: outputs
+ 
+hydra:
+  run:
+    dir: ${logging.output_dir}/gfn_pure/${now:%Y-%m-%d_%H-%M-%S}_seed${seed}
+  job:
+    chdir: false
+ 

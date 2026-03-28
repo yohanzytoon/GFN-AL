@@ -1,0 +1,57 @@
+seed: 0
+device: cpu
+ 
+env:
+  max_length: 7
+  num_tokens: 27
+ 
+oracle:
+  budget: 1000
+  vocabulary_check: true
+ 
+metrics:
+  # If known, set to the true environment optimum for true regret computation
+  optimum_score: null
+ 
+active:
+  initial_size: 64
+  batch_size: 16
+  candidate_pool_size: 512
+  max_rounds: 80
+  sampling_strategy: uniform
+  candidate_unique: true
+  min_length: 3
+  acquisition_beta: 2.0
+  surrogate:
+    fit_maxiter: 80
+ 
+  # ── Hyperparamètres GFlowNet ───────────────────────────────────────────
+  gfn:
+    # Nombre de trajectoires échantillonnées pour entraîner le GFlowNet
+    # à chaque round. Plus élevé = meilleure convergence, mais plus lent.
+    n_steps: 500
+ 
+    # Learning rate de l'optimiseur Adam.
+    # Valeur recommandée par Bengio et al. 2022.
+    lr: 0.001
+ 
+    # Taille des couches cachées du MLP (backbone).
+    # Cohérent avec l'architecture de Bengio et al. 2022.
+    hidden_dim: 256
+ 
+    # Nombre de couches cachées dans le backbone.
+    n_layers: 3
+ 
+    # Reward minimale pour éviter log(0) dans la loss Trajectory Balance.
+    # TB exige R(x) > 0 strictement.
+    reward_min: 0.001
+ 
+logging:
+  output_dir: outputs
+ 
+hydra:
+  run:
+    dir: ${logging.output_dir}/gfn_active/${now:%Y-%m-%d_%H-%M-%S}_seed${seed}
+  job:
+    chdir: false
+ 
