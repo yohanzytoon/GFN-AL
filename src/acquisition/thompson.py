@@ -11,5 +11,10 @@ def select_thompson(
 ) -> np.ndarray:
     """Select top candidates from one Thompson draw."""
     values = np.asarray(draws, dtype=float).reshape(-1)
-    order = np.argsort(values)[::-1]
-    return order[:batch_size]
+
+    batch_size = min(batch_size, len(values))
+
+    idx = np.argpartition(values, -batch_size)[-batch_size:]
+    idx = idx[np.argsort(values[idx])[::-1]]
+
+    return idx
