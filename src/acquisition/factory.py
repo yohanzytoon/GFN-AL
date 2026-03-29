@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-
 import numpy as np
 
 from acquisition.ei import select_ei
@@ -26,27 +25,29 @@ def select_acquisition_batch(
     thompson_samples: int = 1,
 ) -> np.ndarray:
     """Dispatch batch selection to the requested acquisition function."""
-    name = str(acquisition).lower()
+
+    name = acquisition.lower()
+
     if name == "ucb":
-        return select_ucb(mean=mean, std=std, batch_size=batch_size, beta=beta)
+        return select_ucb(mean, std, batch_size, beta)
+
     if name in {"uncertainty", "uncertainty_sampling"}:
-        return select_uncertainty(std=std, batch_size=batch_size)
+        return select_uncertainty(std, batch_size)
+
     if name == "ei":
-        return select_ei(
-            mean=mean,
-            std=std,
-            batch_size=batch_size,
-            best_f=best_f,
-            xi=xi,
-        )
+        return select_ei(mean, std, batch_size, best_f, xi)
+
     if name == "thompson":
         if surrogate is None or candidate_states is None:
-            raise ValueError("Thompson sampling requires surrogate and candidate_states.")
+            raise ValueError("Thompson requires surrogate and candidate_states.")
+
         draws = surrogate.sample(
             np.asarray(candidate_states, dtype=np.int64),
-            n_samples=max(int(thompson_samples), 1),
+            n_samples=max(thompson_samples, 1),
         )
-        return select_thompson(draws=draws[0], batch_size=batch_size)
+
+        return select_thompson(draws[0], batch_size)
+
     raise ValueError(
         f"Unsupported acquisition function: {acquisition}. "
         "Use one of {'ucb', 'uncertainty', 'ei', 'thompson'}."
