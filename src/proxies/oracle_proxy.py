@@ -224,3 +224,4 @@ class OracleProxy(Proxy):
             return [states]  # pragma: no cover - defensive
 
         raise TypeError(f"Unsupported state container type: {type(states)}")
+
