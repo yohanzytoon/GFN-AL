@@ -18,7 +18,12 @@ def select_ucb(
     batch_size: int,
     beta: float = 2.0,
 ) -> np.ndarray:
-    """Select top batch_size candidates by UCB."""
-    scores = ucb_scores(mean=mean, std=std, beta=beta)
-    order = np.argsort(scores)[::-1]
-    return order[:batch_size]
+    """Select top candidates by UCB."""
+    scores = ucb_scores(mean, std, beta)
+
+    batch_size = min(batch_size, len(scores))
+
+    idx = np.argpartition(scores, -batch_size)[-batch_size:]
+    idx = idx[np.argsort(scores[idx])[::-1]]
+
+    return idx
