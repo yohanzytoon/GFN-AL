@@ -1,5 +1,6 @@
 seed: 0
 device: cpu
+gflownet_root: ../gflownet
 
 env:
   max_length: 7
@@ -10,26 +11,42 @@ oracle:
   vocabulary_check: true
 
 metrics:
-  # If known, set to the true environment optimum for true regret computation
-  optimum_score: null
+  optimum_score: 45
 
 active:
-  initial_size: 64
+  initial_size: 96
   batch_size: 16
-  candidate_pool_size: 512
+  candidate_pool_size: 8192
+  mutation_pool_size: 4096
+  mutation_top_k: 32
+  mutation_edits: 3
+  local_search_pool_size: 512
+  local_search_beam_width: 32
+  local_search_steps: 5
+  local_search_neighbors_per_step: 128
+  local_search_sampling_strategy: ngram_score
+  local_search_mutation_edits: 1
   max_rounds: 80
-  sampling_strategy: uniform
+  sampling_strategy: ngram
+  initial_sampling_strategy: frequency
+  candidate_sampling_strategy: ngram
+  fallback_sampling_strategy: frequency
+  mutation_sampling_strategy: ngram_score
   candidate_unique: true
   min_length: 3
+  diversity_weight: 0.4
+  plausibility_bonus_weight: 2.0
   acquisition:
     name: ucb
-    beta: 2.0
+    beta: 2.5
+    beta_min: 0.3
     xi: 0.0
     thompson_samples: 1
   surrogate:
     type: gp
-    fit_maxiter: 80
+    fit_maxiter: 100
     prefer_botorch: true
+    max_train_points: 750
     hidden_dim: 256
     n_layers: 2
     dropout: 0.1

@@ -13,15 +13,16 @@ oracle:
   enforce_budget: true
 
 metrics:
-  optimum_score: null
+  optimum_score: 45
 
 dataset:
   num_queries: 500
   unique: true
-  sampling_strategy: uniform
+  sampling_strategy: frequency
   min_length: 3
 
 baseline:
+  initial_dataset_queries: 128
   train_fraction: 0.8
   hidden_dim: 256
   n_layers: 2
@@ -30,13 +31,30 @@ baseline:
   lr: 0.001
   epochs: 100
   batch_size: 64
+  candidate_pool_size: 4096
+  candidate_sampling_strategy: frequency_score
+  candidate_unique: true
+  min_length: 3
 
 active:
-  initial_size: 48
+  initial_size: 96
   batch_size: 12
-  candidate_pool_size: 256
+  candidate_pool_size: 2048
+  mutation_pool_size: 1024
+  mutation_top_k: 20
+  mutation_edits: 2
+  local_search_pool_size: 256
+  local_search_beam_width: 16
+  local_search_steps: 4
+  local_search_neighbors_per_step: 80
+  local_search_sampling_strategy: frequency_score
+  local_search_mutation_edits: 1
   max_rounds: 32
-  sampling_strategy: uniform
+  sampling_strategy: frequency
+  initial_sampling_strategy: frequency_score
+  candidate_sampling_strategy: frequency_score
+  fallback_sampling_strategy: frequency
+  mutation_sampling_strategy: frequency_score
   candidate_unique: true
   min_length: 3
   acquisition:
@@ -76,12 +94,31 @@ gflownet:
     checkpoints_period: 200
 
 hybrid:
-  initial_size: 48
+  initial_size: 96
   batch_size: 12
-  candidate_pool_size: 192
-  fallback_random_pool_size: 192
+  candidate_pool_size: 768
+  fallback_random_pool_size: 768
+  always_include_random_pool: true
+  random_pool_size: 768
+  mutation_pool_size: 768
+  mutation_top_k: 20
+  mutation_edits: 2
+  local_search_pool_size: 256
+  local_search_beam_width: 16
+  local_search_steps: 4
+  local_search_neighbors_per_step: 64
+  local_search_sampling_strategy: frequency_score
+  local_search_mutation_edits: 1
+  final_candidate_pool_size: 8192
+  final_random_pool_size: 2048
+  final_mutation_pool_size: 2048
+  final_local_search_pool_size: 0
   max_rounds: 24
-  sampling_strategy: uniform
+  sampling_strategy: frequency
+  initial_sampling_strategy: frequency_score
+  candidate_sampling_strategy: frequency_score
+  fallback_sampling_strategy: frequency
+  mutation_sampling_strategy: frequency_score
   candidate_unique: true
   min_length: 3
   acquisition:
@@ -101,18 +138,21 @@ hybrid:
     batch_size: 64
     lr: 0.001
   gflownet:
-    n_train_steps: 600
+    n_train_steps: 900
     batch_size_forward: 48
     lr: 0.0001
     z_dim: 16
     lr_z_mult: 10.0
-    random_action_prob: 0.05
+    random_action_prob: 0.02
     reward_min: 0.0001
     do_clip_rewards: true
-    retrain_every: 1
-    sample_size: 256
+    retrain_every: 2
+    warm_start: true
+    refresh_before_final_selection: true
+    sample_size: 1024
+    final_gflownet_sample_size: 4096
     prediction_mode: mean
-    exploration_beta: 1.0
+    exploration_beta: 0.5
     reward_transform: softplus
     policy:
       hidden_dim: 256

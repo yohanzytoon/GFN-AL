@@ -13,26 +13,51 @@ oracle:
   enforce_budget: true
 
 metrics:
-  optimum_score: null
+  optimum_score: 45
 
 hybrid:
-  initial_size: 64
+  initial_size: 96
   batch_size: 16
-  candidate_pool_size: 256
-  fallback_random_pool_size: 256
-  max_rounds: 40
-  sampling_strategy: uniform
+  candidate_pool_size: 8192
+  fallback_random_pool_size: 4096
+  always_include_random_pool: true
+  random_pool_size: 4096
+  mutation_pool_size: 4096
+  mutation_top_k: 48
+  mutation_edits: 3
+  local_search_pool_size: 512
+  local_search_beam_width: 32
+  local_search_steps: 5
+  local_search_neighbors_per_step: 128
+  local_search_sampling_strategy: ngram_score
+  local_search_mutation_edits: 1
+  final_candidate_pool_size: 32768
+  final_random_pool_size: 8192
+  final_mutation_pool_size: 8192
+  final_local_search_pool_size: 0
+  final_oracle_reserve: 0
+  max_rounds: 80
+  sampling_strategy: ngram
+  initial_sampling_strategy: frequency
+  candidate_sampling_strategy: ngram
+  fallback_sampling_strategy: frequency
+  mutation_sampling_strategy: ngram_score
   candidate_unique: true
   min_length: 3
+  diversity_weight: 0.4
+  plausibility_bonus_weight: 2.0
   acquisition:
     name: ucb
-    beta: 2.0
+    beta: 2.5
+    beta_min: 0.3
+    final_beta: 0.0
     xi: 0.0
     thompson_samples: 1
   surrogate:
     type: gp
-    fit_maxiter: 80
+    fit_maxiter: 100
     prefer_botorch: true
+    max_train_points: 750
     hidden_dim: 256
     n_layers: 2
     dropout: 0.1
@@ -41,27 +66,34 @@ hybrid:
     batch_size: 64
     lr: 0.001
   gflownet:
-    n_train_steps: 1000
+    n_train_steps: 1500
     batch_size_forward: 64
     lr: 0.0001
     z_dim: 16
     lr_z_mult: 10.0
-    random_action_prob: 0.05
+    random_action_prob: 0.1
     reward_min: 0.0001
     do_clip_rewards: true
-    retrain_every: 1
-    sample_size: 512
-    prediction_mode: mean
-    exploration_beta: 1.0
+    retrain_every: 3
+    start_round: 5
+    min_positive_count: 8
+    warm_start: true
+    refresh_before_final_selection: false
+    sample_size: 1024
+    local_search_anchor_pool_size: 256
+    local_search_anchor_top_k: 16
+    final_gflownet_sample_size: 8192
+    prediction_mode: ucb
+    exploration_beta: 1.5
     reward_transform: softplus
     policy:
       hidden_dim: 256
       n_layers: 3
       shared_backward: false
     evaluator:
-      period: 250
+      period: 500
       n: 128
-      checkpoints_period: 250
+      checkpoints_period: 500
 
 logging:
   output_dir: outputs

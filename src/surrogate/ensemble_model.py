@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from utils.scrabble import SCRABBLE_LETTER_SCORES, domain_features, ngram_plausibility, vocabulary_bigram_model
+
 
 class _EnsembleMember(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int, n_layers: int, dropout: float):
@@ -59,6 +61,12 @@ class DeepEnsembleSurrogate:
         self._members: list[_EnsembleMember] = []
 
     def _featurize(self, states: np.ndarray) -> np.ndarray:
+        """Convert integer state vectors to feature vectors for the ensemble.
+
+        Mirrors BoTorchGPSurrogate._featurize: one-hot + score_sum + word_len
+        + domain features (vowel ratio, ngram plausibility, consonant clusters,
+        has-vowel).  See BoTorchGPSurrogate._featurize for detailed documentation.
+        """
         states = np.asarray(states, dtype=np.int64)
         if states.ndim == 1:
             states = states.reshape(1, -1)
@@ -67,7 +75,20 @@ class DeepEnsembleSurrogate:
                 f"Expected states with length {self.max_length}, got {states.shape[1]}"
             )
         onehot = np.eye(self.num_tokens, dtype=np.float32)[states]
-        return onehot.reshape(states.shape[0], -1)
+        flat = onehot.reshape(states.shape[0], -1)
+
+        letter_scores = SCRABBLE_LETTER_SCORES[states]
+        score_sum = letter_scores.sum(axis=1, keepdims=True) / (self.max_length * 10.0)
+        word_len = (states != 0).sum(axis=1, keepdims=True).astype(np.float32) / self.max_length
+
+        # Domain features: vowel ratio, ngram plausibility, consonant clusters, has-vowel.
+        dom_feats = domain_features(states, self.max_length)
+        bigram_model = vocabulary_bigram_model(max_length=self.max_length)
+        if bigram_model is not None:
+            ngram_scores = ngram_plausibility(states, bigram_model)
+            dom_feats[:, 1] = (ngram_scores + 5.0).clip(0.0, 10.0) / 10.0
+
+        return np.concatenate([flat, score_sum, word_len, dom_feats], axis=1)
 
     def fit(self, states: np.ndarray, targets: np.ndarray) -> None:
         """Fit each ensemble member on a bootstrap resample."""
@@ -177,7 +198,7 @@ class DeepEnsembleSurrogate:
             batch_size=int(payload["batch_size"]),
             lr=float(payload["lr"]),
         )
-        input_dim = model.max_length * model.num_tokens
+        input_dim = model._featurize(np.zeros((1, model.max_length), dtype=np.int64)).shape[1]
         model._members = []
         for state_dict in payload["state_dicts"]:
             member = _EnsembleMember(

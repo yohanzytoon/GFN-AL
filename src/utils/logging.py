@@ -62,7 +62,11 @@ class ExperimentLogger:
             path.write_text("", encoding="utf-8")
             return path
 
-        fieldnames = list(self._records[0].keys())
+        fieldnames: list[str] = []
+        for record in self._records:
+            for key in record.keys():
+                if key not in fieldnames:
+                    fieldnames.append(key)
         with path.open("w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()

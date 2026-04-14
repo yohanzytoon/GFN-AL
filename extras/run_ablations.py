@@ -11,7 +11,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]  # GFN-AL/
 SRC_ROOT = PROJECT_ROOT / "src"
 GFLOWNET_ROOT = (PROJECT_ROOT / "../gflownet").resolve()
 if str(SRC_ROOT) not in sys.path:
@@ -39,7 +39,7 @@ def _save_json(path: Path, payload: dict) -> None:
         json.dump(payload, f, indent=2)
 
 
-@hydra.main(config_path="../configs", config_name="ablations", version_base="1.1")
+@hydra.main(config_path=".", config_name="ablations", version_base="1.1")
 def main(cfg):
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
     run_dir = Path(HydraConfig.get().runtime.output_dir)
@@ -63,8 +63,10 @@ def main(cfg):
                 value_dir = study_dir / value_key / f"seed_{seed}"
                 if method == "active":
                     summary = run_active_learning(seed_cfg, output_dir=value_dir, logger=None)
+                    _save_json(value_dir / "summary_active.json", summary)
                 elif method == "hybrid":
                     summary = run_hybrid_gflownet_active(seed_cfg, output_dir=value_dir, logger=None)
+                    _save_json(value_dir / "summary_hybrid.json", summary)
                 else:
                     raise ValueError(f"Unsupported ablation method: {method}")
                 summaries_by_value[value_key].append(summary)

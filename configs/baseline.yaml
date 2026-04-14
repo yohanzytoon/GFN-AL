@@ -1,5 +1,6 @@
 seed: 0
 device: cpu
+gflownet_root: ../gflownet
 
 env:
   max_length: 7
@@ -10,21 +11,25 @@ oracle:
   vocabulary_check: true
 
 metrics:
-  # If known, set to the true environment optimum for true regret computation
-  optimum_score: null
+  optimum_score: 45
 
 dataset:
   path: null
 
 baseline:
+  initial_dataset_queries: 200
   train_fraction: 0.8
   hidden_dim: 256
-  n_layers: 2
+  n_layers: 3
   dropout: 0.1
-  positive_weight: 5.0
+  positive_weight: 8.0
   lr: 0.001
-  epochs: 200
+  epochs: 300
   batch_size: 64
+  candidate_pool_size: 16384
+  candidate_sampling_strategy: ngram_score
+  candidate_unique: true
+  min_length: 3
 
 logging:
   output_dir: outputs

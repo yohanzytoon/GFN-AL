@@ -1,4 +1,4 @@
-seeds: [0, 1, 2]
+seeds: [0, 1, 2, 3, 4]
 device: cpu
 float_precision: 32
 gflownet_root: ../gflownet
@@ -13,15 +13,16 @@ oracle:
   enforce_budget: true
 
 metrics:
-  optimum_score: null
+  optimum_score: 45
 
 dataset:
   num_queries: 1000
   unique: true
-  sampling_strategy: uniform
+  sampling_strategy: ngram_score
   min_length: 3
 
 baseline:
+  initial_dataset_queries: 256
   train_fraction: 0.8
   hidden_dim: 256
   n_layers: 2
@@ -30,24 +31,45 @@ baseline:
   lr: 0.001
   epochs: 200
   batch_size: 64
-
-active:
-  initial_size: 64
-  batch_size: 16
-  candidate_pool_size: 512
-  max_rounds: 80
-  sampling_strategy: uniform
+  candidate_pool_size: 8192
+  candidate_sampling_strategy: ngram_score
   candidate_unique: true
   min_length: 3
+
+active:
+  initial_size: 96
+  batch_size: 16
+  candidate_pool_size: 8192
+  mutation_pool_size: 2048
+  mutation_top_k: 24
+  mutation_edits: 2
+  local_search_pool_size: 512
+  local_search_beam_width: 24
+  local_search_steps: 4
+  local_search_neighbors_per_step: 96
+  local_search_sampling_strategy: ngram_score
+  local_search_mutation_edits: 1
+  max_rounds: 80
+  sampling_strategy: ngram
+  initial_sampling_strategy: frequency
+  candidate_sampling_strategy: ngram
+  fallback_sampling_strategy: frequency
+  mutation_sampling_strategy: ngram_score
+  candidate_unique: true
+  min_length: 3
+  diversity_weight: 0.3
+  plausibility_bonus_weight: 2.0
   acquisition:
     name: ucb
     beta: 2.0
+    beta_min: 0.5
     xi: 0.0
     thompson_samples: 1
   surrogate:
     type: gp
     fit_maxiter: 80
     prefer_botorch: true
+    max_train_points: 500
     hidden_dim: 256
     n_layers: 2
     dropout: 0.1
@@ -76,23 +98,48 @@ gflownet:
     checkpoints_period: 250
 
 hybrid:
-  initial_size: 64
+  initial_size: 96
   batch_size: 16
-  candidate_pool_size: 256
-  fallback_random_pool_size: 256
-  max_rounds: 40
-  sampling_strategy: uniform
+  candidate_pool_size: 8192
+  fallback_random_pool_size: 2048
+  always_include_random_pool: true
+  random_pool_size: 2048
+  mutation_pool_size: 2048
+  mutation_top_k: 32
+  mutation_edits: 2
+  local_search_pool_size: 512
+  local_search_beam_width: 24
+  local_search_steps: 4
+  local_search_neighbors_per_step: 96
+  local_search_sampling_strategy: ngram_score
+  local_search_mutation_edits: 1
+  final_candidate_pool_size: 16384
+  final_random_pool_size: 4096
+  final_mutation_pool_size: 4096
+  final_local_search_pool_size: 0
+  final_oracle_reserve: 0
+  max_rounds: 80
+  sampling_strategy: ngram
+  initial_sampling_strategy: frequency
+  candidate_sampling_strategy: ngram
+  fallback_sampling_strategy: frequency
+  mutation_sampling_strategy: ngram_score
   candidate_unique: true
   min_length: 3
+  diversity_weight: 0.3
+  plausibility_bonus_weight: 2.0
   acquisition:
     name: ucb
     beta: 2.0
+    beta_min: 0.5
+    final_beta: 0.0
     xi: 0.0
     thompson_samples: 1
   surrogate:
     type: gp
     fit_maxiter: 80
     prefer_botorch: true
+    max_train_points: 500
     hidden_dim: 256
     n_layers: 2
     dropout: 0.1
@@ -106,12 +153,19 @@ hybrid:
     lr: 0.0001
     z_dim: 16
     lr_z_mult: 10.0
-    random_action_prob: 0.05
+    random_action_prob: 0.1
     reward_min: 0.0001
     do_clip_rewards: true
-    retrain_every: 1
-    sample_size: 512
-    prediction_mode: mean
+    retrain_every: 3
+    start_round: 5
+    min_positive_count: 20
+    warm_start: true
+    refresh_before_final_selection: false
+    sample_size: 1024
+    local_search_anchor_pool_size: 128
+    local_search_anchor_top_k: 10
+    final_gflownet_sample_size: 4096
+    prediction_mode: ucb
     exploration_beta: 1.0
     reward_transform: softplus
     policy:
@@ -119,13 +173,14 @@ hybrid:
       n_layers: 3
       shared_backward: false
     evaluator:
-      period: 250
+      period: 500
       n: 128
-      checkpoints_period: 250
+      checkpoints_period: 500
 
 comparison:
-  methods: [baseline, active, gflownet, hybrid]
-  metrics: [best_score, top10_score, mean_score, valid_word_ratio, mode_coverage, topk_edit_distance, queries_to_90pct_best]
+  methods: [baseline, active, gflownet, gflownet_upper_bound, hybrid]
+  gflownet_upper_bound_budget: 5000
+  metrics: [best_score, top10_score, mean_score, valid_word_ratio, mode_coverage, topk_edit_distance, queries_to_90pct_best, oracle_queries, real_oracle_queries, fake_oracle_queries, cheap_model_queries, runtime_seconds]
   curve_keys: [best, top10]
   reference_method: hybrid
 

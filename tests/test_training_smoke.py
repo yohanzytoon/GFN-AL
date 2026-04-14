@@ -6,6 +6,11 @@ from training.dataset import generate_random_dataset
 from training.train_active import run_active_learning
 from training.train_baseline import run_supervised_baseline
 from training.train_gflownet import run_oracle_gflownet
+from training.train_hybrid_gfn_only import (
+    _bootstrap_oracle_dataset,
+    _sample_gfn_only_candidates,
+    run_hybrid_gfn_only,
+)
 from training.train_hybrid import run_hybrid_gflownet_active
 
 
@@ -176,3 +181,102 @@ def test_hybrid_smoke_with_fake_gflownet_backend(tmp_path: Path, monkeypatch):
     result = run_hybrid_gflownet_active(cfg, output_dir=tmp_path / "hybrid", logger=None)
     assert result["method"] == "hybrid_gflownet_active"
     assert result["oracle_queries"] <= 40
+
+
+def test_hybrid_gfn_only_smoke_with_fake_gflownet_backend(tmp_path: Path, monkeypatch):
+    cfg = _base_config(seed=4)
+    cfg["hybrid"]["fallback_pool_size"] = 8
+    cfg["hybrid"]["gflownet"]["start_round"] = 0
+    cfg["hybrid"]["gflownet"]["min_positive_count"] = 0
+    cfg["hybrid"]["gflownet"]["sample_batches"] = 2
+    cfg["hybrid"]["gflownet"]["max_sample_batches"] = 4
+
+    def _fake_train(*args, **kwargs):
+        return _FakeGFN(), None
+
+    monkeypatch.setattr("training.train_hybrid_gfn_only._train_upstream_gflownet", _fake_train)
+    monkeypatch.setattr(
+        "training.train_hybrid_gfn_only.sample_gflownet_terminating_states",
+        lambda gfn, n_samples: [[1, 2, 0, 0, 0, 0, 0], [2, 3, 0, 0, 0, 0, 0], [4, 5, 0, 0, 0, 0, 0]],
+    )
+    result = run_hybrid_gfn_only(cfg, output_dir=tmp_path / "hybrid_gfn_only", logger=None)
+    assert result["method"] == "hybrid_gfn_only"
+    assert result["candidate_sampling_strategy"] == "gflownet_only"
+    assert result["oracle_queries"] <= 40
+
+
+def test_hybrid_gfn_only_resamples_gfn_candidates_until_pool_fills(monkeypatch):
+    batches = iter(
+        [
+            [[1, 2, 0, 0, 0, 0, 0]],
+            [[2, 3, 0, 0, 0, 0, 0]],
+            [[4, 5, 0, 0, 0, 0, 0]],
+        ]
+    )
+
+    monkeypatch.setattr(
+        "training.train_hybrid_gfn_only.sample_gflownet_terminating_states",
+        lambda gfn, n_samples: next(batches),
+    )
+
+    candidates, breakdown = _sample_gfn_only_candidates(
+        gfn=object(),
+        seen_states=[],
+        gflownet_sample_size=1,
+        gflownet_sample_batches=1,
+        gflownet_max_sample_batches=4,
+        min_required=3,
+    )
+
+    assert breakdown["gflownet_sample_batches_used"] == 3
+    assert candidates == [
+        [1, 2, 0, 0, 0, 0, 0],
+        [2, 3, 0, 0, 0, 0, 0],
+        [4, 5, 0, 0, 0, 0, 0],
+    ]
+
+
+def test_hybrid_gfn_only_bootstraps_before_first_gfn(monkeypatch):
+    class _BootstrapOracle:
+        def __init__(self):
+            self.remaining_budget = 6
+
+        def __call__(self, states):
+            import numpy as np
+            import torch
+
+            arr = np.asarray(states)
+            self.remaining_budget -= int(arr.shape[0])
+            scores = [1.0 if int(row[0]) == 3 else 0.0 for row in arr]
+            return torch.tensor(scores, dtype=torch.float32)
+
+    monkeypatch.setattr(
+        "training.train_hybrid_gfn_only.sample_terminating_states",
+        lambda *args, **kwargs: [
+            [3, 4, 0, 0, 0, 0, 0],
+            [5, 6, 0, 0, 0, 0, 0],
+            [7, 8, 0, 0, 0, 0, 0],
+        ],
+    )
+
+    states, scores, logs, bootstrap_rounds = _bootstrap_oracle_dataset(
+        env=None,
+        oracle=_BootstrapOracle(),
+        initial_states=[[1, 2, 0, 0, 0, 0, 0]],
+        initial_scores=[0.0],
+        bootstrap_pool_size=8,
+        bootstrap_batch_size=2,
+        bootstrap_sampling_strategy="frequency",
+        min_length=3,
+        candidate_unique=True,
+        final_oracle_reserve=0,
+        target_min_rounds=1,
+        target_positive_count=1,
+        seed=0,
+        gflownet_root=None,
+    )
+
+    assert bootstrap_rounds == 1
+    assert len(logs) == 1
+    assert len(states) == 3
+    assert scores[-2:] == [1.0, 0.0]

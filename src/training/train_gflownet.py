@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ import torch
 from training.common import flatten_oracle_history
 from utils.logging import ExperimentLogger, set_global_seed
 from utils.metrics import build_query_curve, search_quality_metrics
+from utils.scrabble import resolve_scrabble_optimum
 from utils.upstream_gflownet import compose_upstream_train_config, ensure_gflownet_on_path
 
 
@@ -33,6 +35,20 @@ def _build_overrides(
     policy_cfg = dict(gflownet_cfg.get("policy", {}))
     evaluator_cfg = dict(gflownet_cfg.get("evaluator", {}))
 
+    replay_capacity = int(gflownet_cfg.get("replay_capacity", 0))
+    batch_size_backward_replay = int(
+        gflownet_cfg.get(
+            "batch_size_backward_replay",
+            max(int(gflownet_cfg.get("batch_size_forward", 64)) // 4, 0)
+            if replay_capacity > 0
+            else 0,
+        )
+    )
+    batch_size_backward_dataset = int(gflownet_cfg.get("batch_size_backward_dataset", 0))
+    replay_sampling = str(gflownet_cfg.get("replay_sampling", "permutation"))
+    clip_grad_norm = float(gflownet_cfg.get("clip_grad_norm", 1.0))
+    temperature_logits = float(gflownet_cfg.get("temperature_logits", 1.0))
+
     overrides = [
         "env=scrabble",
         "gflownet=trajectorybalance",
@@ -53,11 +69,16 @@ def _build_overrides(
         "++logger.progressbar.skip=true",
         "++logger.logdir.overwrite=true",
         f"++gflownet.random_action_prob={float(gflownet_cfg.get('random_action_prob', 0.0))}",
+        f"++gflownet.temperature_logits={temperature_logits}",
+        f"++gflownet.replay_sampling={replay_sampling}",
         f"++gflownet.optimizer.n_train_steps={int(gflownet_cfg.get('n_train_steps', 2000))}",
         f"++gflownet.optimizer.batch_size.forward={int(gflownet_cfg.get('batch_size_forward', 64))}",
+        f"++gflownet.optimizer.batch_size.backward_replay={batch_size_backward_replay}",
+        f"++gflownet.optimizer.batch_size.backward_dataset={batch_size_backward_dataset}",
         f"++gflownet.optimizer.lr={float(gflownet_cfg.get('lr', 1e-4))}",
         f"++gflownet.optimizer.z_dim={int(gflownet_cfg.get('z_dim', 16))}",
         f"++gflownet.optimizer.lr_z_mult={float(gflownet_cfg.get('lr_z_mult', 10.0))}",
+        f"++gflownet.optimizer.clip_grad_norm={clip_grad_norm}",
         "++policy.forward.type=mlp",
         f"++policy.forward.n_hid={int(policy_cfg.get('hidden_dim', 256))}",
         f"++policy.forward.n_layers={int(policy_cfg.get('n_layers', 3))}",
@@ -68,6 +89,8 @@ def _build_overrides(
         f"++evaluator.period={int(evaluator_cfg.get('period', 250))}",
         f"++evaluator.n={int(evaluator_cfg.get('n', 128))}",
         f"++evaluator.checkpoints_period={int(evaluator_cfg.get('checkpoints_period', 250))}",
+        "++evaluator.train_log_period=-1",
+        f"++buffer.replay_capacity={replay_capacity}",
         "++buffer.train.type=null",
         "++buffer.test.type=null",
     ]
@@ -94,6 +117,7 @@ def _train_upstream_gflownet(
     output_dir: Path,
     proxy_target: str,
     proxy_kwargs: dict[str, Any],
+    warm_start_from=None,
 ):
     """Train a GFlowNet using the upstream repo and return the in-memory agent."""
     ensure_gflownet_on_path(config.get("gflownet_root"))
@@ -110,6 +134,7 @@ def _train_upstream_gflownet(
         output_dir=output_dir,
     )
     gfn = gflownet_from_config(upstream_cfg)
+    _warm_start_gflownet(gfn, warm_start_from)
     stop_reason = None
     try:
         gfn.train()
@@ -122,6 +147,46 @@ def _train_upstream_gflownet(
     return gfn, stop_reason
 
 
+def _warm_start_gflownet(gfn, previous_gfn) -> None:
+    """Warm-start a newly built upstream GFlowNet from a previous agent."""
+    if previous_gfn is None:
+        return
+
+    if not (
+        hasattr(gfn, "forward_policy")
+        and hasattr(previous_gfn, "forward_policy")
+        and hasattr(gfn.forward_policy, "model")
+        and hasattr(previous_gfn.forward_policy, "model")
+    ):
+        return
+
+    gfn.forward_policy.model.load_state_dict(previous_gfn.forward_policy.model.state_dict())
+    if (
+        hasattr(gfn, "backward_policy")
+        and hasattr(previous_gfn, "backward_policy")
+        and hasattr(gfn.backward_policy, "model")
+        and hasattr(previous_gfn.backward_policy, "model")
+    ):
+        gfn.backward_policy.model.load_state_dict(previous_gfn.backward_policy.model.state_dict())
+
+    if (
+        getattr(gfn, "state_flow", None) is not None
+        and getattr(previous_gfn, "state_flow", None) is not None
+        and hasattr(gfn.state_flow, "model")
+        and hasattr(previous_gfn.state_flow, "model")
+    ):
+        gfn.state_flow.model.load_state_dict(previous_gfn.state_flow.model.state_dict())
+
+    if getattr(gfn, "logZ", None) is not None and getattr(previous_gfn, "logZ", None) is not None:
+        gfn.logZ.data = previous_gfn.logZ.detach().clone().to(gfn.device)
+
+    if hasattr(gfn, "opt") and hasattr(previous_gfn, "opt"):
+        try:
+            gfn.opt.load_state_dict(previous_gfn.opt.state_dict())
+        except Exception:
+            pass
+
+
 def run_oracle_gflownet(
     config: dict[str, Any],
     output_dir: Path,
@@ -129,10 +194,19 @@ def run_oracle_gflownet(
 ) -> dict[str, Any]:
     """Train a GFlowNet with direct oracle access and summarize its search quality."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    start_time = time.perf_counter()
     set_global_seed(int(config["seed"]))
 
     oracle_cfg = config["oracle"]
     gflownet_cfg = config["gflownet"]
+    env_cfg = config["env"]
+    optimum_info = resolve_scrabble_optimum(
+        max_length=int(env_cfg["max_length"]),
+        vocabulary_check=bool(oracle_cfg.get("vocabulary_check", False)),
+        configured_optimum_score=config.get("metrics", {}).get("optimum_score"),
+        gflownet_root=config.get("gflownet_root"),
+    )
+    optimum_score = float(optimum_info["optimum_score"])
 
     gfn, stop_reason = _train_upstream_gflownet(
         config,
@@ -152,13 +226,13 @@ def run_oracle_gflownet(
     queried_states, queried_scores = flatten_oracle_history(gfn.proxy.call_history)
     curve = build_query_curve(
         queried_scores,
-        optimum_score=config.get("metrics", {}).get("optimum_score"),
+        optimum_score=optimum_score,
     )
     quality = search_quality_metrics(
         scores=queried_scores,
         states=queried_states if queried_states else None,
         oracle_queries=int(gfn.proxy.call_count),
-        optimum_score=config.get("metrics", {}).get("optimum_score"),
+        optimum_score=optimum_score,
         top_k=10,
         pad_value=0,
     )
@@ -190,7 +264,18 @@ def run_oracle_gflownet(
         "sampled_scores": sampled_scores,
         "stopped_reason": stop_reason,
         "scores": [float(score) for score in queried_scores],
+        "real_oracle_queries": int(gfn.proxy.call_count),
+        "fake_oracle_queries": 0,
+        "cheap_model_queries": 0,
+        "gflownet_train_calls": 1,
+        "gflownet_total_train_steps": int(gflownet_cfg.get("n_train_steps", 2000)),
+        "runtime_seconds": float(time.perf_counter() - start_time),
+        "optimum_score": optimum_score,
     }
+    if optimum_info.get("optimum_words"):
+        result["optimum_words"] = list(optimum_info["optimum_words"])
+        result["optimum_word_count"] = int(optimum_info["optimum_word_count"])
+        result["optimum_source"] = str(optimum_info["optimum_source"])
 
     if logger is not None:
         logger.dump_summary(result, filename="summary_gflownet.json")

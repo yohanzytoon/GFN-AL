@@ -15,7 +15,7 @@ metrics:
 dataset:
   num_queries: 1000
   unique: true
-  sampling_strategy: uniform
+  sampling_strategy: frequency
   min_length: 3
 
 logging:

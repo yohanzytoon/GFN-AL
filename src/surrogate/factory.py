@@ -30,6 +30,7 @@ def build_surrogate(
         return BoTorchGPSurrogate(
             fit_maxiter=int(config.get("fit_maxiter", 80)),
             prefer_botorch=bool(config.get("prefer_botorch", True)),
+            max_train_points=int(config.get("max_train_points", 500)),
             **common,
         )
     if surrogate_type in {"ensemble", "deep_ensemble"}:

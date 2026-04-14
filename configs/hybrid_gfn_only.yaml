@@ -1,0 +1,104 @@
+seed: 0
+device: cpu
+float_precision: 32
+gflownet_root: ../gflownet
+
+env:
+  max_length: 7
+  num_tokens: 27
+
+oracle:
+  budget: 1000
+  vocabulary_check: true
+  enforce_budget: true
+
+metrics:
+  optimum_score: 45
+
+hybrid:
+  initial_size: 192
+  batch_size: 16
+  fallback_pool_size: 4096
+  final_candidate_pool_size: 32768
+  final_oracle_reserve: 64
+  max_rounds: 80
+  sampling_strategy: ngram_score
+  initial_sampling_strategy: ngram_score
+  fallback_sampling_strategy: ngram_score
+  bootstrap_sampling_strategy: ngram_score
+  bootstrap_batch_size: 16
+  bootstrap_min_rounds: 3
+  bootstrap_min_positive_count: 8
+  bootstrap_budget_fraction: 0.35
+  candidate_unique: true
+  min_length: 3
+  diversity_weight: 0.3
+  plausibility_bonus_weight: 3.0
+  acquisition:
+    name: ucb
+    beta: 1.2
+    beta_min: 0.1
+    final_beta: 0.0
+    xi: 0.0
+    thompson_samples: 1
+  surrogate:
+    type: gp
+    fit_maxiter: 100
+    prefer_botorch: true
+    max_train_points: 750
+    hidden_dim: 256
+    n_layers: 2
+    dropout: 0.1
+    ensemble_size: 5
+    epochs: 75
+    batch_size: 64
+    lr: 0.001
+  gflownet:
+    n_train_steps: 2500
+    batch_size_forward: 64
+    batch_size_backward_replay: 16
+    batch_size_backward_dataset: 0
+    replay_capacity: 256
+    replay_sampling: permutation
+    clip_grad_norm: 1.0
+    temperature_logits: 1.0
+    lr: 0.0001
+    z_dim: 16
+    lr_z_mult: 10.0
+    random_action_prob: 0.1
+    reward_min: 0.01
+    do_clip_rewards: true
+    retrain_every: 3
+    start_round: 0
+    min_positive_count: 3
+    warm_start: true
+    refresh_before_final_selection: true
+    sample_size: 2048
+    sample_batches: 3
+    max_sample_batches: 6
+    final_gflownet_sample_size: 8192
+    final_sample_batches: 4
+    final_max_sample_batches: 8
+    prediction_mode: mean
+    exploration_beta: 1.0
+    reward_transform: exp_beta
+    beta_scale: 5.0
+    score_max: 45.0
+    plausibility_mode: multiplicative
+    policy:
+      hidden_dim: 256
+      n_layers: 3
+      shared_backward: false
+    evaluator:
+      period: 500
+      n: 128
+      checkpoints_period: 500
+
+logging:
+  output_dir: outputs
+
+hydra:
+  run:
+    dir: ${logging.output_dir}/hybrid_gfn_only/${now:%Y-%m-%d_%H-%M-%S}_seed${seed}
+  job:
+    chdir: false

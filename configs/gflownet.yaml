@@ -10,21 +10,21 @@ env:
 oracle:
   budget: 1000
   vocabulary_check: true
-  enforce_budget: true
+  enforce_budget: false
 
 metrics:
-  optimum_score: null
+  optimum_score: 45
 
 gflownet:
-  n_train_steps: 1500
+  n_train_steps: 2500
   batch_size_forward: 64
   lr: 0.0001
   z_dim: 16
   lr_z_mult: 10.0
-  random_action_prob: 0.05
+  random_action_prob: 0.08
   reward_min: 0.0
   do_clip_rewards: false
-  evaluation_samples: 256
+  evaluation_samples: 512
   policy:
     hidden_dim: 256
     n_layers: 3
