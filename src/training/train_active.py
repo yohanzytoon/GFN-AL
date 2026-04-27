@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from acquisition.factory import select_acquisition_batch
+from acquisition.ucb import select_acquisition_batch
 from environments.scrabble_oracle_env import ScrabbleOracleEnv
 from proxies.oracle_proxy import OracleProxy
 from training.common import (
@@ -70,10 +70,8 @@ def run_active_learning(
     max_rounds = int(active_cfg.get("max_rounds", 200))
     acquisition_cfg = dict(active_cfg.get("acquisition", {}))
     acquisition_name = str(acquisition_cfg.get("name", "ucb")).lower()
-    beta = float(acquisition_cfg.get("beta", active_cfg.get("acquisition_beta", 2.0)))
+    beta = float(acquisition_cfg.get("beta", 2.0))
     beta_min = float(acquisition_cfg.get("beta_min", beta))
-    xi = float(acquisition_cfg.get("xi", 0.0))
-    thompson_samples = int(acquisition_cfg.get("thompson_samples", 1))
     surrogate_cfg = dict(active_cfg.get("surrogate", {}))
 
     sampling_strategy = str(active_cfg.get("sampling_strategy", "frequency"))
@@ -181,8 +179,6 @@ def run_active_learning(
         local_search_candidates, local_search_stats = propose_local_search_candidates(
             env=env,
             surrogate=surrogate,
-            acquisition_name=acquisition_name,
-            best_f=float(np.max(train_scores)) if len(train_scores) > 0 else 0.0,
             anchor_states=anchor_states,
             proposal_size=local_search_pool_size,
             beam_width=local_search_beam_width,
@@ -194,8 +190,6 @@ def run_active_learning(
             seen_states=states,
             seed=seed + 40_000 + round_idx,
             beta=round_beta,
-            xi=xi,
-            thompson_samples=thompson_samples,
             mutation_edits=local_search_mutation_edits,
             max_length=int(env_cfg["max_length"]),
             gflownet_root=gflownet_root,
@@ -243,16 +237,11 @@ def run_active_learning(
             break
 
         selected_idx = select_acquisition_batch(
-            acquisition_name,
             mean=mean,
             std=std,
             batch_size=this_batch,
-            best_f=float(np.max(train_scores)) if len(train_scores) > 0 else 0.0,
-            surrogate=surrogate,
             candidate_states=candidate_matrix,
             beta=round_beta,
-            xi=xi,
-            thompson_samples=thompson_samples,
             diversity_weight=diversity_weight,
         )
         selected_states = candidate_matrix[selected_idx].tolist()

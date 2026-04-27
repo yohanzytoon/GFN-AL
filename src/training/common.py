@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from acquisition.factory import score_acquisition
+from acquisition.ucb import ucb_scores
 from surrogate.factory import build_surrogate
 from utils.scrabble import ngram_plausibility, vocabulary_bigram_model
 
@@ -57,8 +57,6 @@ def flatten_oracle_history(
         if record_states and len(record_states) == len(record_scores):
             states.extend(record_states)
             scores.extend(float(score) for score in record_scores)
-        else:
-            scores.extend(float(score) for score in record_scores)
     return states, scores
 
 
@@ -106,8 +104,6 @@ def propose_local_search_candidates(
     *,
     env,
     surrogate,
-    acquisition_name: str,
-    best_f: float,
     anchor_states: list[list[int]],
     proposal_size: int,
     beam_width: int,
@@ -119,8 +115,6 @@ def propose_local_search_candidates(
     seen_states: Iterable[Iterable[int]],
     seed: int,
     beta: float = 2.0,
-    xi: float = 0.0,
-    thompson_samples: int = 1,
     mutation_edits: int = 1,
     max_length: int | None = None,
     gflownet_root: str | None = None,
@@ -136,7 +130,7 @@ def propose_local_search_candidates(
         or neighbors_per_step <= 0
         or len(anchor_states) == 0
     ):
-        return [], {"surrogate_queries": 0, "evaluated_candidates": 0}
+        return [], {"surrogate_queries": 0}
 
     beam_width = max(int(beam_width), 1)
     n_steps = max(int(n_steps), 1)
@@ -146,7 +140,6 @@ def propose_local_search_candidates(
     local_seen = {tuple(int(x) for x in state) for state in seen_states}
     scored_candidates: dict[tuple[int, ...], float] = {}
     surrogate_queries = 0
-    evaluated_candidates = 0
 
     beam = [list(state) for state in anchor_states[:beam_width]]
     for step in range(n_steps):
@@ -173,19 +166,8 @@ def propose_local_search_candidates(
                 gflownet_root=gflownet_root,
                 weight=float(plausibility_weight),
             )
-        scores = score_acquisition(
-            acquisition_name,
-            mean=mean,
-            std=std,
-            best_f=best_f,
-            surrogate=surrogate,
-            candidate_states=candidate_matrix,
-            beta=beta,
-            xi=xi,
-            thompson_samples=thompson_samples,
-        )
+        scores = ucb_scores(mean=mean, std=std, beta=beta)
         surrogate_queries += int(candidate_matrix.shape[0])
-        evaluated_candidates += int(candidate_matrix.shape[0])
 
         order = np.argsort(np.asarray(scores, dtype=float))[::-1]
         beam = []
@@ -209,7 +191,4 @@ def propose_local_search_candidates(
 
     ranked = sorted(scored_candidates.items(), key=lambda item: item[1], reverse=True)
     proposals = [list(key) for key, _ in ranked[:proposal_size]]
-    return proposals, {
-        "surrogate_queries": int(surrogate_queries),
-        "evaluated_candidates": int(evaluated_candidates),
-    }
+    return proposals, {"surrogate_queries": int(surrogate_queries)}

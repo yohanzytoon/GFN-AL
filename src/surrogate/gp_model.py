@@ -50,8 +50,7 @@ class BoTorchGPSurrogate:
             if BOTORCH_AVAILABLE and prefer_botorch:
                 warnings.warn(
                     "BoTorch GP requires float64 tensors, which Apple MPS does not support. "
-                    "Falling back to the sklearn GP backend. Use surrogate.type=ensemble "
-                    "if you want actual MPS acceleration.",
+                    "Falling back to the sklearn GP backend.",
                     RuntimeWarning,
                 )
             self.backend = "sklearn"
@@ -210,17 +209,6 @@ class BoTorchGPSurrogate:
         if return_std:
             return mean_np, std_np
         return mean_np
-
-    def sample(self, states: np.ndarray, n_samples: int = 1) -> np.ndarray:
-        """Draw independent Gaussian samples from predictive marginals."""
-        mean, std = self.predict(states, return_std=True)
-        rng = np.random.default_rng()
-        draws = rng.normal(
-            loc=mean[None, :],
-            scale=np.maximum(std[None, :], 1e-9),
-            size=(n_samples, mean.shape[0]),
-        )
-        return draws
 
     def save(self, path: str | Path) -> Path:
         """Persist surrogate checkpoint."""

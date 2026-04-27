@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from surrogate.ensemble_model import DeepEnsembleSurrogate
+from surrogate.gp_model import BoTorchGPSurrogate
 from surrogate.factory import build_surrogate
 
 
-def test_deep_ensemble_fit_predict_shapes():
+def test_gp_fit_predict_shapes():
     states = np.array(
         [
             [1, 2, 0, 0],
@@ -17,17 +18,13 @@ def test_deep_ensemble_fit_predict_shapes():
         dtype=np.int64,
     )
     scores = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
-    model = DeepEnsembleSurrogate(
+    model = BoTorchGPSurrogate(
         max_length=4,
         num_tokens=27,
         device="cpu",
-        hidden_dim=32,
-        n_layers=1,
-        dropout=0.0,
-        ensemble_size=2,
-        epochs=5,
-        batch_size=2,
-        lr=1e-2,
+        fit_maxiter=5,
+        prefer_botorch=False,
+        max_train_points=10,
     )
     model.fit(states, scores)
     mean, std = model.predict(states, return_std=True)
@@ -36,18 +33,26 @@ def test_deep_ensemble_fit_predict_shapes():
     assert np.all(std >= 0.0)
 
 
-def test_surrogate_factory_builds_ensemble():
+def test_surrogate_factory_builds_gp():
     model = build_surrogate(
         {
-            "type": "ensemble",
-            "hidden_dim": 16,
-            "n_layers": 1,
-            "ensemble_size": 2,
-            "epochs": 3,
-            "batch_size": 2,
+            "type": "gp",
+            "fit_maxiter": 5,
+            "prefer_botorch": False,
+            "max_train_points": 10,
         },
         max_length=4,
         num_tokens=27,
         device="cpu",
     )
-    assert isinstance(model, DeepEnsembleSurrogate)
+    assert isinstance(model, BoTorchGPSurrogate)
+
+
+def test_surrogate_factory_rejects_removed_ensemble():
+    with pytest.raises(ValueError, match="Use 'gp'"):
+        build_surrogate(
+            {"type": "ensemble"},
+            max_length=4,
+            num_tokens=27,
+            device="cpu",
+        )

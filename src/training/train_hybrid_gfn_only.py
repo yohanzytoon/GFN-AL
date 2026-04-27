@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from acquisition.factory import select_acquisition_batch
+from acquisition.ucb import select_acquisition_batch
 from environments.scrabble_oracle_env import ScrabbleOracleEnv
 from proxies.oracle_proxy import OracleProxy
 from training.common import (
@@ -247,8 +247,6 @@ def run_hybrid_gfn_only(
     final_acquisition_name = str(
         acquisition_cfg.get("final_name", acquisition_name)
     ).lower()
-    xi = float(acquisition_cfg.get("xi", 0.0))
-    thompson_samples = int(acquisition_cfg.get("thompson_samples", 1))
 
     surrogate_cfg = dict(hybrid_cfg.get("surrogate", {}))
     gflownet_schedule_cfg = dict(hybrid_cfg.get("gflownet", {}))
@@ -481,16 +479,11 @@ def run_hybrid_gfn_only(
             break
 
         selected_idx = select_acquisition_batch(
-            acquisition_name,
             mean=mean,
             std=std,
             batch_size=this_batch,
-            best_f=float(np.max(train_scores)) if len(train_scores) > 0 else 0.0,
-            surrogate=surrogate,
             candidate_states=candidate_matrix,
             beta=round_beta,
-            xi=xi,
-            thompson_samples=thompson_samples,
             diversity_weight=diversity_weight,
         )
         selected_states = candidate_matrix[selected_idx].tolist()
@@ -649,16 +642,11 @@ def run_hybrid_gfn_only(
 
             final_batch = int(min(oracle.remaining_budget, candidate_matrix.shape[0]))
             selected_idx = select_acquisition_batch(
-                final_acquisition_name,
                 mean=mean,
                 std=std,
                 batch_size=final_batch,
-                best_f=float(np.max(train_scores)) if len(train_scores) > 0 else 0.0,
-                surrogate=surrogate,
                 candidate_states=candidate_matrix,
                 beta=final_beta,
-                xi=xi,
-                thompson_samples=thompson_samples,
                 diversity_weight=max(diversity_weight * 0.5, 0.1),
             )
             selected_states = candidate_matrix[selected_idx].tolist()

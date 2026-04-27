@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from acquisition.factory import select_acquisition_batch
+from acquisition.ucb import select_acquisition_batch
 from environments.scrabble_oracle_env import ScrabbleOracleEnv
 from proxies.oracle_proxy import OracleProxy
 from training.common import (
@@ -120,15 +120,11 @@ def _augment_local_search_anchors_with_gflownet(
     *,
     gfn,
     surrogate,
-    acquisition_name: str,
-    best_f: float,
     base_anchor_states: list[list[int]],
     seen_states: list[list[int]],
     pool_size: int,
     top_k: int,
     beta: float,
-    xi: float,
-    thompson_samples: int,
     diversity_weight: float,
     max_length: int,
     gflownet_root: str | None,
@@ -152,16 +148,11 @@ def _augment_local_search_anchors_with_gflownet(
         weight=float(plausibility_weight),
     )
     selected_idx = select_acquisition_batch(
-        acquisition_name,
         mean=mean,
         std=std,
         batch_size=min(int(top_k), int(candidate_matrix.shape[0])),
-        best_f=float(best_f),
-        surrogate=surrogate,
         candidate_states=candidate_matrix,
         beta=float(beta),
-        xi=float(xi),
-        thompson_samples=int(thompson_samples),
         diversity_weight=max(float(diversity_weight) * 0.5, 0.0),
     )
     selected_states = candidate_matrix[selected_idx].tolist()
@@ -279,8 +270,6 @@ def run_hybrid_gflownet_active(
     final_acquisition_name = str(
         acquisition_cfg.get("final_name", acquisition_name)
     ).lower()
-    xi = float(acquisition_cfg.get("xi", 0.0))
-    thompson_samples = int(acquisition_cfg.get("thompson_samples", 1))
 
     surrogate_cfg = dict(hybrid_cfg.get("surrogate", {}))
     gflownet_schedule_cfg = dict(hybrid_cfg.get("gflownet", {}))
@@ -407,15 +396,11 @@ def run_hybrid_gflownet_active(
         local_search_anchor_states, gflownet_anchor_surrogate_queries = _augment_local_search_anchors_with_gflownet(
             gfn=gfn,
             surrogate=surrogate,
-            acquisition_name=acquisition_name,
-            best_f=float(np.max(train_scores)) if len(train_scores) > 0 else 0.0,
             base_anchor_states=mutation_anchor_states,
             seen_states=states,
             pool_size=gflownet_local_anchor_pool_size,
             top_k=gflownet_local_anchor_top_k,
             beta=round_beta,
-            xi=xi,
-            thompson_samples=thompson_samples,
             diversity_weight=diversity_weight,
             max_length=int(env_cfg["max_length"]),
             gflownet_root=gflownet_root,
@@ -425,8 +410,6 @@ def run_hybrid_gflownet_active(
         local_search_candidates, local_search_stats = propose_local_search_candidates(
             env=env,
             surrogate=surrogate,
-            acquisition_name=acquisition_name,
-            best_f=float(np.max(train_scores)) if len(train_scores) > 0 else 0.0,
             anchor_states=local_search_anchor_states,
             proposal_size=local_search_pool_size,
             beam_width=local_search_beam_width,
@@ -438,8 +421,6 @@ def run_hybrid_gflownet_active(
             seen_states=states,
             seed=seed + 60_000 + round_idx,
             beta=round_beta,
-            xi=xi,
-            thompson_samples=thompson_samples,
             mutation_edits=local_search_mutation_edits,
             max_length=int(env_cfg["max_length"]),
             gflownet_root=gflownet_root,
@@ -487,16 +468,11 @@ def run_hybrid_gflownet_active(
             break
 
         selected_idx = select_acquisition_batch(
-            acquisition_name,
             mean=mean,
             std=std,
             batch_size=this_batch,
-            best_f=float(np.max(train_scores)) if len(train_scores) > 0 else 0.0,
-            surrogate=surrogate,
             candidate_states=candidate_matrix,
             beta=round_beta,
-            xi=xi,
-            thompson_samples=thompson_samples,
             diversity_weight=diversity_weight,
         )
         selected_states = candidate_matrix[selected_idx].tolist()
@@ -628,15 +604,11 @@ def run_hybrid_gflownet_active(
         final_local_search_anchor_states, gflownet_anchor_surrogate_queries = _augment_local_search_anchors_with_gflownet(
             gfn=gfn,
             surrogate=surrogate,
-            acquisition_name=final_acquisition_name,
-            best_f=float(np.max(train_scores)) if len(train_scores) > 0 else 0.0,
             base_anchor_states=mutation_anchor_states,
             seen_states=states,
             pool_size=max(gflownet_local_anchor_pool_size, batch_size * 8),
             top_k=max(gflownet_local_anchor_top_k, batch_size),
             beta=final_beta,
-            xi=xi,
-            thompson_samples=thompson_samples,
             diversity_weight=diversity_weight,
             max_length=int(env_cfg["max_length"]),
             gflownet_root=gflownet_root,
@@ -652,8 +624,6 @@ def run_hybrid_gflownet_active(
         local_search_candidates, local_search_stats = propose_local_search_candidates(
             env=env,
             surrogate=surrogate,
-            acquisition_name=final_acquisition_name,
-            best_f=float(np.max(train_scores)) if len(train_scores) > 0 else 0.0,
             anchor_states=final_local_search_anchor_states,
             proposal_size=final_local_search_pool_size,
             beam_width=max(local_search_beam_width, 16),
@@ -665,8 +635,6 @@ def run_hybrid_gflownet_active(
             seen_states=states,
             seed=seed + 950_000,
             beta=final_beta,
-            xi=xi,
-            thompson_samples=thompson_samples,
             mutation_edits=max(local_search_mutation_edits, 1),
             max_length=int(env_cfg["max_length"]),
             gflownet_root=gflownet_root,
@@ -709,16 +677,11 @@ def run_hybrid_gflownet_active(
             final_batch = int(min(oracle.remaining_budget, candidate_matrix.shape[0]))
             # Final selection: lower diversity weight to favour pure exploitation.
             selected_idx = select_acquisition_batch(
-                final_acquisition_name,
                 mean=mean,
                 std=std,
                 batch_size=final_batch,
-                best_f=float(np.max(train_scores)) if len(train_scores) > 0 else 0.0,
-                surrogate=surrogate,
                 candidate_states=candidate_matrix,
                 beta=final_beta,
-                xi=xi,
-                thompson_samples=thompson_samples,
                 diversity_weight=max(diversity_weight * 0.5, 0.1),
             )
             selected_states = candidate_matrix[selected_idx].tolist()

@@ -40,20 +40,11 @@ active:
     name: ucb
     beta: 2.5
     beta_min: 0.3
-    xi: 0.0
-    thompson_samples: 1
   surrogate:
     type: gp
     fit_maxiter: 100
     prefer_botorch: true
     max_train_points: 750
-    hidden_dim: 256
-    n_layers: 2
-    dropout: 0.1
-    ensemble_size: 5
-    epochs: 75
-    batch_size: 64
-    lr: 0.001
 
 logging:
   output_dir: outputs

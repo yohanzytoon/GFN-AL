@@ -35,17 +35,10 @@ hybrid:
     final_beta: 0.05
 
   surrogate:
-    type: ensemble
+    type: gp
     fit_maxiter: 100
     prefer_botorch: true
     max_train_points: 1000
-    hidden_dim: 256
-    n_layers: 2
-    dropout: 0.1
-    ensemble_size: 5
-    epochs: 75
-    batch_size: 64
-    lr: 0.001
 
   gflownet:
     n_train_steps: 1500

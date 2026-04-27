@@ -29,10 +29,6 @@ class SurrogateProxy(Proxy):
     ucb       : mean + exploration_beta × std.  Useful as a quick acquisition
                 signal but biases the GFlowNet toward uncertain, often-invalid
                 candidates.
-    thompson  : Draw a single sample from the surrogate posterior per state
-                (mean + N(0,1) × std).  Stochastic but unbiased — naturally
-                encourages mode coverage during GFlowNet training.
-
     Reward transforms
     -----------------
     exp_beta        : exp(beta_scale × clamp(score / score_max, 0, 1))
@@ -116,17 +112,10 @@ class SurrogateProxy(Proxy):
             values = mean
         elif self.prediction_mode == "ucb":
             values = mean + self.exploration_beta * std
-        elif self.prediction_mode == "thompson":
-            # Sample once from the GP posterior per state.  Stochastic across
-            # batches → the GFlowNet sees a different "landscape" each forward
-            # pass, which encourages exploration of diverse high-reward modes
-            # without explicitly biasing toward uncertain regions.
-            noise = np.random.standard_normal(size=mean.shape)
-            values = mean + noise * std
         else:
             raise ValueError(
                 f"Unsupported prediction_mode: {self.prediction_mode!r}. "
-                "Use one of {'mean', 'ucb', 'thompson'}."
+                "Use one of {'mean', 'ucb'}."
             )
 
         # --- Step 2: apply reward transform to shape the distribution ----------

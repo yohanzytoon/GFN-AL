@@ -7,7 +7,6 @@ from typing import Any
 
 import torch
 
-from surrogate.ensemble_model import DeepEnsembleSurrogate
 from surrogate.gp_model import BoTorchGPSurrogate
 
 
@@ -33,20 +32,9 @@ def build_surrogate(
             max_train_points=int(config.get("max_train_points", 500)),
             **common,
         )
-    if surrogate_type in {"ensemble", "deep_ensemble"}:
-        return DeepEnsembleSurrogate(
-            hidden_dim=int(config.get("hidden_dim", 256)),
-            n_layers=int(config.get("n_layers", 2)),
-            dropout=float(config.get("dropout", 0.1)),
-            ensemble_size=int(config.get("ensemble_size", 5)),
-            epochs=int(config.get("epochs", 75)),
-            batch_size=int(config.get("batch_size", 64)),
-            lr=float(config.get("lr", 1e-3)),
-            **common,
-        )
     raise ValueError(
         f"Unsupported surrogate type: {surrogate_type}. "
-        "Use one of {'gp', 'ensemble'}."
+        "Use 'gp'."
     )
 
 
@@ -56,6 +44,4 @@ def load_surrogate_checkpoint(path: str | Path, device: str = "cpu"):
     surrogate_type = str(payload.get("surrogate_type", "gp")).lower()
     if surrogate_type == "gp":
         return BoTorchGPSurrogate.load(path, device=device)
-    if surrogate_type in {"ensemble", "deep_ensemble"}:
-        return DeepEnsembleSurrogate.load(path, device=device)
     raise ValueError(f"Unsupported surrogate checkpoint type: {surrogate_type}")
