@@ -24,6 +24,7 @@ from training.train_active import run_active_learning
 from training.train_baseline import run_supervised_baseline
 from training.train_gflownet import run_oracle_gflownet
 from training.train_hybrid import run_hybrid_gflownet_active
+from training.train_hybrid_gfn_only import run_hybrid_gfn_only
 from utils.results import aggregate_method_curves, aggregate_method_summaries, pairwise_metric_tests
 from utils.visualization import plot_query_curves
 
@@ -52,6 +53,7 @@ def main(cfg):
         "active": [],
         "gflownet": [],
         "gflownet_upper_bound": [],
+        "hybrid_gfn_only": [],
         "hybrid": [],
     }
 
@@ -107,6 +109,23 @@ def main(cfg):
             _save_json(upper_dir / "summary_gflownet_upper_bound.json", upper_summary)
             summaries_by_method["gflownet_upper_bound"].append(
                 upper_summary
+            )
+
+        if "hybrid_gfn_only" in methods:
+            hybrid_gfn_only_cfg = copy.deepcopy(seed_cfg)
+            hybrid_gfn_only_cfg["hybrid"] = copy.deepcopy(seed_cfg["hybrid_gfn_only"])
+            hybrid_gfn_only_dir = run_dir / "hybrid_gfn_only" / f"seed_{seed}"
+            hybrid_gfn_only_summary = run_hybrid_gfn_only(
+                hybrid_gfn_only_cfg,
+                output_dir=hybrid_gfn_only_dir,
+                logger=None,
+            )
+            _save_json(
+                hybrid_gfn_only_dir / "summary_hybrid_gfn_only.json",
+                hybrid_gfn_only_summary,
+            )
+            summaries_by_method["hybrid_gfn_only"].append(
+                hybrid_gfn_only_summary
             )
 
         if "hybrid" in methods:

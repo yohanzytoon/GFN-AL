@@ -1,4 +1,4 @@
-seeds: [0, 1, 2, 3, 4]
+seeds: [0]
 device: cpu
 float_precision: 32
 gflownet_root: ../gflownet
@@ -14,27 +14,6 @@ oracle:
 
 metrics:
   optimum_score: 45
-
-dataset:
-  num_queries: 1000
-  unique: true
-  sampling_strategy: ngram_score
-  min_length: 3
-
-baseline:
-  initial_dataset_queries: 256
-  train_fraction: 0.8
-  hidden_dim: 256
-  n_layers: 2
-  dropout: 0.1
-  positive_weight: 5.0
-  lr: 0.001
-  epochs: 200
-  batch_size: 64
-  candidate_pool_size: 8192
-  candidate_sampling_strategy: ngram_score
-  candidate_unique: true
-  min_length: 3
 
 active:
   initial_size: 96
@@ -79,15 +58,15 @@ active:
     lr: 0.001
 
 gflownet:
-  n_train_steps: 1500
-  batch_size_forward: 64
+  n_train_steps: 250
+  batch_size_forward: 4
   lr: 0.0001
   z_dim: 16
   lr_z_mult: 10.0
-  random_action_prob: 0.05
+  random_action_prob: 0.08
   reward_min: 0.0
   do_clip_rewards: false
-  evaluation_samples: 256
+  evaluation_samples: 512
   policy:
     hidden_dim: 256
     n_layers: 3
@@ -177,12 +156,82 @@ hybrid:
       n: 128
       checkpoints_period: 500
 
+hybrid_gfn_only:
+  initial_size: 256
+  batch_size: 4
+  final_candidate_pool_size: 65536
+  final_oracle_reserve: 16
+  max_rounds: 190
+  sampling_strategy: gflownet
+  initial_sampling_strategy: ngram
+  candidate_unique: true
+  min_length: 3
+  diversity_weight: 0.2
+  plausibility_bonus_weight: 1.0
+  acquisition:
+    name: ucb
+    beta: 2.5
+    beta_min: 0.1
+    final_beta: 0.05
+  surrogate:
+    type: ensemble
+    fit_maxiter: 100
+    prefer_botorch: true
+    max_train_points: 1000
+    hidden_dim: 256
+    n_layers: 2
+    dropout: 0.1
+    ensemble_size: 5
+    epochs: 75
+    batch_size: 64
+    lr: 0.001
+  gflownet:
+    n_train_steps: 1500
+    batch_size_forward: 64
+    batch_size_backward_replay: 32
+    batch_size_backward_dataset: 32
+    replay_capacity: 1024
+    replay_sampling: permutation
+    clip_grad_norm: 1.0
+    temperature_logits: 1.0
+    lr: 0.0001
+    z_dim: 16
+    lr_z_mult: 10.0
+    random_action_prob: 0.05
+    reward_min: 0.01
+    do_clip_rewards: true
+    retrain_every: 4
+    start_round: 0
+    min_positive_count: 6
+    warm_start: true
+    refresh_before_final_selection: true
+    sample_size: 4096
+    sample_batches: 3
+    max_sample_batches: 10
+    final_gflownet_sample_size: 16384
+    final_sample_batches: 4
+    final_max_sample_batches: 8
+    prediction_mode: mean
+    exploration_beta: 0.5
+    reward_transform: exp_beta
+    beta_scale: 5.0
+    score_max: 45.0
+    plausibility_mode: multiplicative
+    policy:
+      hidden_dim: 256
+      n_layers: 3
+      shared_backward: false
+    evaluator:
+      period: 500
+      n: 128
+      checkpoints_period: 500
+
 comparison:
-  methods: [baseline, active, gflownet, gflownet_upper_bound, hybrid]
+  methods: [gflownet, active, hybrid_gfn_only, hybrid]
   gflownet_upper_bound_budget: 5000
   metrics: [best_score, top10_score, mean_score, valid_word_ratio, mode_coverage, topk_edit_distance, queries_to_90pct_best, oracle_queries, real_oracle_queries, fake_oracle_queries, cheap_model_queries, runtime_seconds]
   curve_keys: [best, top10]
-  reference_method: hybrid
+  reference_method: hybrid_gfn_only
 
 logging:
   output_dir: outputs

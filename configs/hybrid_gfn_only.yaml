@@ -16,36 +16,29 @@ metrics:
   optimum_score: 45
 
 hybrid:
-  initial_size: 192
-  batch_size: 16
-  fallback_pool_size: 4096
-  final_candidate_pool_size: 32768
-  final_oracle_reserve: 64
-  max_rounds: 80
-  sampling_strategy: ngram_score
-  initial_sampling_strategy: ngram_score
-  fallback_sampling_strategy: ngram_score
-  bootstrap_sampling_strategy: ngram_score
-  bootstrap_batch_size: 16
-  bootstrap_min_rounds: 3
-  bootstrap_min_positive_count: 8
-  bootstrap_budget_fraction: 0.35
+  initial_size: 256
+  batch_size: 4
+  final_candidate_pool_size: 65536
+  final_oracle_reserve: 16
+  max_rounds: 190
+  sampling_strategy: gflownet
+  initial_sampling_strategy: ngram
   candidate_unique: true
   min_length: 3
-  diversity_weight: 0.3
-  plausibility_bonus_weight: 3.0
+  diversity_weight: 0.2
+  plausibility_bonus_weight: 1.0
+
   acquisition:
     name: ucb
-    beta: 1.2
+    beta: 2.5
     beta_min: 0.1
-    final_beta: 0.0
-    xi: 0.0
-    thompson_samples: 1
+    final_beta: 0.05
+
   surrogate:
-    type: gp
+    type: ensemble
     fit_maxiter: 100
     prefer_botorch: true
-    max_train_points: 750
+    max_train_points: 1000
     hidden_dim: 256
     n_layers: 2
     dropout: 0.1
@@ -53,34 +46,35 @@ hybrid:
     epochs: 75
     batch_size: 64
     lr: 0.001
+
   gflownet:
-    n_train_steps: 2500
+    n_train_steps: 1500
     batch_size_forward: 64
-    batch_size_backward_replay: 16
-    batch_size_backward_dataset: 0
-    replay_capacity: 256
+    batch_size_backward_replay: 32
+    batch_size_backward_dataset: 32
+    replay_capacity: 1024
     replay_sampling: permutation
     clip_grad_norm: 1.0
     temperature_logits: 1.0
     lr: 0.0001
     z_dim: 16
     lr_z_mult: 10.0
-    random_action_prob: 0.1
+    random_action_prob: 0.05
     reward_min: 0.01
     do_clip_rewards: true
-    retrain_every: 3
+    retrain_every: 4
     start_round: 0
-    min_positive_count: 3
+    min_positive_count: 6
     warm_start: true
     refresh_before_final_selection: true
-    sample_size: 2048
+    sample_size: 4096
     sample_batches: 3
-    max_sample_batches: 6
-    final_gflownet_sample_size: 8192
+    max_sample_batches: 10
+    final_gflownet_sample_size: 16384
     final_sample_batches: 4
     final_max_sample_batches: 8
     prediction_mode: mean
-    exploration_beta: 1.0
+    exploration_beta: 0.5
     reward_transform: exp_beta
     beta_scale: 5.0
     score_max: 45.0

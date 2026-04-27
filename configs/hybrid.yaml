@@ -79,7 +79,7 @@ hybrid:
     min_positive_count: 8
     warm_start: true
     refresh_before_final_selection: false
-    sample_size: 1024
+    sample_size: 32768
     local_search_anchor_pool_size: 256
     local_search_anchor_top_k: 16
     final_gflownet_sample_size: 8192
