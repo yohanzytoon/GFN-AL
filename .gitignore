@@ -15,6 +15,10 @@ venv/
 outputs/
 logs/
 wandb/
+*.log
+
+# Hydra
+.hydra/
 
 # OS files
 .DS_Store

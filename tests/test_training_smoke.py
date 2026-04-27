@@ -47,7 +47,7 @@ def _base_config(seed: int = 0):
             "sampling_strategy": "uniform",
             "candidate_unique": True,
             "min_length": 3,
-            "acquisition": {"name": "ei", "beta": 1.5, "xi": 0.0, "thompson_samples": 1},
+            "acquisition": {"name": "ucb", "beta": 1.5},
             "surrogate": {"type": "ensemble", "hidden_dim": 32, "n_layers": 1, "ensemble_size": 2, "epochs": 3, "batch_size": 16, "lr": 1e-3},
         },
         "gflownet": {
@@ -72,7 +72,7 @@ def _base_config(seed: int = 0):
             "sampling_strategy": "uniform",
             "candidate_unique": True,
             "min_length": 3,
-            "acquisition": {"name": "ucb", "beta": 1.0, "xi": 0.0, "thompson_samples": 1},
+            "acquisition": {"name": "ucb", "beta": 1.0},
             "surrogate": {"type": "ensemble", "hidden_dim": 32, "n_layers": 1, "ensemble_size": 2, "epochs": 3, "batch_size": 16, "lr": 1e-3},
             "gflownet": {
                 "n_train_steps": 10,
@@ -274,6 +274,7 @@ def test_hybrid_gfn_only_bootstraps_before_first_gfn(monkeypatch):
         target_positive_count=1,
         seed=0,
         gflownet_root=None,
+        max_bootstrap_queries=6,
     )
 
     assert bootstrap_rounds == 1
