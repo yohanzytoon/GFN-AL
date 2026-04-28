@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from acquisition.factory import select_acquisition_batch
-from acquisition.ucb import select_ucb
+from acquisition.ucb import select_acquisition_batch, select_ucb
 
 
 def test_ucb_selects_highest_scores():
@@ -13,11 +12,10 @@ def test_ucb_selects_highest_scores():
     assert idx.tolist() == [3, 2]
 
 
-def test_factory_dispatches_ucb():
+def test_select_acquisition_batch_ucb():
     mean = np.array([0.0, 1.0, 3.0])
     std = np.array([0.1, 0.2, 0.3])
     idx = select_acquisition_batch(
-        "ucb",
         mean=mean,
         std=std,
         batch_size=1,
@@ -26,7 +24,7 @@ def test_factory_dispatches_ucb():
     assert idx.tolist() == [2]
 
 
-def test_factory_uses_diversity_when_states_are_available():
+def test_select_acquisition_batch_uses_diversity_when_states_available():
     mean = np.array([10.0, 9.9, 9.8])
     std = np.zeros(3)
     states = np.array(
@@ -38,7 +36,6 @@ def test_factory_uses_diversity_when_states_are_available():
         dtype=np.int64,
     )
     idx = select_acquisition_batch(
-        "ucb",
         mean=mean,
         std=std,
         batch_size=2,
