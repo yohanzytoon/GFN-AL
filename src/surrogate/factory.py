@@ -30,6 +30,7 @@ def build_surrogate(
             fit_maxiter=int(config.get("fit_maxiter", 80)),
             prefer_botorch=bool(config.get("prefer_botorch", True)),
             max_train_points=int(config.get("max_train_points", 500)),
+            gflownet_root=config.get("gflownet_root"),
             **common,
         )
     raise ValueError(

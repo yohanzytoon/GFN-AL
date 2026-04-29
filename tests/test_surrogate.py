@@ -48,10 +48,10 @@ def test_surrogate_factory_builds_gp():
     assert isinstance(model, BoTorchGPSurrogate)
 
 
-def test_surrogate_factory_rejects_removed_ensemble():
+def test_surrogate_factory_rejects_unknown_type():
     with pytest.raises(ValueError, match="Use 'gp'"):
         build_surrogate(
-            {"type": "ensemble"},
+            {"type": "not_supported"},
             max_length=4,
             num_tokens=27,
             device="cpu",

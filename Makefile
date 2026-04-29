@@ -1,6 +1,6 @@
 PYTHON ?= .venv/bin/python
 
-.PHONY: install test dataset baseline active gflownet hybrid comparisons ablations quick-compare full-compare
+.PHONY: install test active gflownet hybrid
 
 install:
 	$(PYTHON) -m pip install --upgrade pip
@@ -11,12 +11,6 @@ install:
 test:
 	$(PYTHON) -m pytest -q
 
-dataset:
-	$(PYTHON) experiments/run_dataset.py
-
-baseline:
-	$(PYTHON) experiments/run_baseline.py
-
 active:
 	$(PYTHON) experiments/run_active.py
 
@@ -25,15 +19,3 @@ gflownet:
 
 hybrid:
 	$(PYTHON) experiments/run_hybrid.py
-
-comparisons:
-	$(PYTHON) experiments/run_comparisons.py
-
-ablations:
-	$(PYTHON) extras/run_ablations.py
-
-quick-compare:
-	./scripts/run_compare.sh quick
-
-full-compare:
-	./scripts/run_compare.sh full

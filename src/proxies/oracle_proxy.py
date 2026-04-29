@@ -20,8 +20,8 @@ class OracleProxy(Proxy):
     """
     Proxy wrapper around Scrabble oracle scoring with query-budget enforcement.
 
-    The proxy only exposes the oracle-backed scoring path retained for the
-    preliminary milestone.
+    The proxy records every oracle query so training summaries can report
+    real budget use and reconstruct query-level score curves.
     """
 
     def __init__(
@@ -98,9 +98,10 @@ class OracleProxy(Proxy):
         """Return proxy scores for a batch of states."""
         n_queries = self._batch_size(states)
         self._check_budget(n_queries)
-        scores = self.oracle_scorer(self._prepare_oracle_states(states))
+        oracle_states = self._prepare_oracle_states(states)
+        scores = self.oracle_scorer(oracle_states)
         scores_tensor = tfloat(scores, device=self.device, float_type=self.float)
-        self._record_calls(n_queries=n_queries, scores=scores_tensor)
+        self._record_calls(states=oracle_states, scores=scores_tensor)
         return scores_tensor
 
     def _check_budget(self, n_queries: int) -> None:
@@ -114,28 +115,34 @@ class OracleProxy(Proxy):
                 f"used={self.call_count}, requested={n_queries}, budget={self.oracle_budget}"
             )
 
-    def _record_calls(self, n_queries: int, scores: torch.Tensor) -> None:
+    def _record_calls(self, states: TensorType | list, scores: torch.Tensor) -> None:
+        history_states = self._states_for_history(states)
+        n_queries = len(history_states)
+        scores_list = [float(x) for x in scores.detach().cpu().tolist()]
+        if len(scores_list) != n_queries:
+            raise RuntimeError(
+                "Oracle scorer returned a different number of scores than states: "
+                f"states={n_queries}, scores={len(scores_list)}"
+            )
+
         self.call_count += int(n_queries)
         self.batch_count += 1
-        scores_list = [float(x) for x in scores.detach().cpu().tolist()]
         self.call_history.append(
             {
                 "batch": int(self.batch_count),
                 "n_queries": int(n_queries),
                 "score_mean": float(scores.mean().item()) if scores.numel() > 0 else 0.0,
                 "score_max": float(scores.max().item()) if scores.numel() > 0 else 0.0,
+                "states": history_states,
                 "scores": scores_list,
             }
         )
 
         if self._env is not None and hasattr(self._env, "record_oracle_query"):
-            try:
-                self._env.record_oracle_query(
-                    states=[None] * n_queries,
-                    rewards=scores_list,
-                )
-            except Exception:
-                pass
+            self._env.record_oracle_query(
+                states=history_states,
+                rewards=scores_list,
+            )
 
         self._write_stats()
 
@@ -188,5 +195,28 @@ class OracleProxy(Proxy):
                     return states
             matrix = np.asarray(states, dtype=np.int64)
             return torch.as_tensor(matrix, device=self.device, dtype=torch.long)
+
+        raise TypeError(f"Unsupported state container type: {type(states)}")
+
+    def _states_for_history(self, states: TensorType | list) -> list[Any]:
+        if torch.is_tensor(states):
+            tensor = states.detach().cpu().to(dtype=torch.long)
+            if tensor.ndim == 1:
+                tensor = tensor.reshape(1, -1)
+            return tensor.tolist()
+
+        if isinstance(states, list):
+            if not states:
+                return []
+            first = states[0]
+            if isinstance(first, str):
+                return [str(state) for state in states]
+            if isinstance(first, (list, tuple, np.ndarray)):
+                return [
+                    [str(x) for x in state]
+                    if len(state) > 0 and isinstance(state[0], str)
+                    else [int(x) for x in state]
+                    for state in states
+                ]
 
         raise TypeError(f"Unsupported state container type: {type(states)}")

@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 setup(
     name="gfn_active_learning_project",
     version="0.1.0",
-    description="Preliminary Scrabble dataset, baseline, and active-learning experiments",
+    description="Scrabble active-learning and GFlowNet experiments",
     python_requires=">=3.10",
     package_dir={"": "src"},
     packages=find_packages(where="src"),

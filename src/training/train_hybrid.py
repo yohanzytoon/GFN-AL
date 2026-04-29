@@ -1,7 +1,7 @@
-"""Hybrid GFlowNet + Active Learning — GFlowNet-only candidate generation.
+"""Hybrid active learning with a GP-guided GFlowNet candidate generator.
 
-The only candidates fed to the acquisition function are states sampled directly
-from a GFlowNet trained on the surrogate as a proxy reward.
+Candidates fed to the acquisition function are sampled from a GFlowNet trained
+on the surrogate as a proxy reward.
 
 Before the first GFlowNet trains, the surrogate is bootstrapped with a
 heuristic oracle-labelled warm-up phase so it is not learned from near-random
@@ -25,6 +25,7 @@ from training.common import (
     build_surrogate_from_config,
     compute_plausibility_bonus,
     filter_new_states,
+    query_oracle_scores,
 )
 from training.dataset import (
     deduplicate_state_scores,
@@ -53,7 +54,7 @@ def _sample_hybrid_candidates(
     gflownet_root: str | None = None,
     min_plausibility: float | None = None,
 ) -> tuple[list[list[int]], dict[str, int]]:
-    """Sample candidates exclusively from the GFlowNet.
+    """Sample candidates from the GFlowNet.
 
     If the GFlowNet collapses to duplicates, keep drawing additional batches up
     to a configured cap so acquisition sees a non-trivial unique pool.
@@ -272,14 +273,7 @@ def _bootstrap_oracle_dataset(
             break
 
         queried_states = filtered_candidates[:query_budget]
-        queried_scores = (
-            oracle(np.asarray(queried_states, dtype=np.int64))
-            .detach()
-            .cpu()
-            .numpy()
-            .astype(float)
-            .tolist()
-        )
+        queried_scores = query_oracle_scores(oracle, queried_states)
         states.extend(queried_states)
         scores.extend(float(score) for score in queried_scores)
         bootstrap_rounds += 1
@@ -301,11 +295,11 @@ def run_hybrid(
     output_dir: Path,
     logger: ExperimentLogger | None = None,
 ) -> dict[str, Any]:
-    """Run the GFlowNet-only hybrid pipeline.
+    """Run the hybrid GP + GFlowNet active-learning pipeline.
 
     Surrogate is trained each round on all oracle-queried (state, score) pairs.
     The GFlowNet is trained with the surrogate as a reward proxy.
-    Candidates for the acquisition function come *only* from GFlowNet samples.
+    Candidates for the acquisition function come from GFlowNet samples.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     start_time = time.perf_counter()
@@ -348,25 +342,18 @@ def run_hybrid(
     max_rounds = int(hybrid_cfg.get("max_rounds", 50))
 
     initial_sampling_strategy = str(
-        hybrid_cfg.get(
-            "initial_sampling_strategy",
-            hybrid_cfg.get("sampling_strategy", "frequency"),
-        )
-    )
-    fallback_sampling_strategy = str(
-        hybrid_cfg.get("fallback_sampling_strategy", "frequency")
+        hybrid_cfg.get("initial_sampling_strategy", "ngram")
     )
     min_length = int(hybrid_cfg.get("min_length", 3))
     candidate_unique = bool(hybrid_cfg.get("candidate_unique", True))
 
     acquisition_cfg = dict(hybrid_cfg.get("acquisition", {}))
     acquisition_name = str(acquisition_cfg.get("name", "ucb")).lower()
+    if acquisition_name != "ucb":
+        raise ValueError(f"Unsupported acquisition: {acquisition_name}. Use 'ucb'.")
     beta = float(acquisition_cfg.get("beta", 2.0))
     beta_min = float(acquisition_cfg.get("beta_min", beta))
     final_beta = float(acquisition_cfg.get("final_beta", 0.0))
-    final_acquisition_name = str(
-        acquisition_cfg.get("final_name", acquisition_name)
-    ).lower()
 
     surrogate_cfg = dict(hybrid_cfg.get("surrogate", {}))
     gflownet_schedule_cfg = dict(hybrid_cfg.get("gflownet", {}))
@@ -417,14 +404,11 @@ def run_hybrid(
     )
 
     bootstrap_pool_size = int(
-        hybrid_cfg.get(
-            "bootstrap_pool_size",
-            hybrid_cfg.get("fallback_pool_size", max(batch_size * 32, 512)),
-        )
+        hybrid_cfg.get("bootstrap_pool_size", max(batch_size * 32, 512))
     )
     bootstrap_batch_size = int(hybrid_cfg.get("bootstrap_batch_size", batch_size))
     bootstrap_sampling_strategy = str(
-        hybrid_cfg.get("bootstrap_sampling_strategy", fallback_sampling_strategy)
+        hybrid_cfg.get("bootstrap_sampling_strategy", initial_sampling_strategy)
     )
     bootstrap_min_rounds = int(
         hybrid_cfg.get("bootstrap_min_rounds", gflownet_start_round)
@@ -470,14 +454,7 @@ def run_hybrid(
         seed=seed,
         gflownet_root=gflownet_root,
     )
-    initial_scores = (
-        oracle(env.states2proxy(initial_states))
-        .detach()
-        .cpu()
-        .numpy()
-        .astype(float)
-        .tolist()
-    )
+    initial_scores = query_oracle_scores(oracle, env.states2proxy(initial_states))
     max_bootstrap_queries = max(
         int(bootstrap_budget_fraction * post_initial_budget),
         int(bootstrap_batch_size),
@@ -529,6 +506,7 @@ def run_hybrid(
             max_length=int(env_cfg["max_length"]),
             num_tokens=num_tokens,
             device=device,
+            gflownet_root=gflownet_root,
         )
         surrogate.fit(train_states, train_scores)
         surrogate_fit_count += 1
@@ -608,7 +586,7 @@ def run_hybrid(
             fake_oracle_queries += int(getattr(getattr(gfn, "proxy", None), "call_count", 0))
             last_gflownet_stop_reason = stop_reason
 
-        # Candidate generation: GFlowNet only.
+        # Candidate generation: GFlowNet.
         sampled_candidates, candidate_breakdown = _sample_hybrid_candidates(
             gfn=gfn,
             seen_states=states,
@@ -648,9 +626,7 @@ def run_hybrid(
             diversity_weight=diversity_weight,
         )
         selected_states = candidate_matrix[selected_idx].tolist()
-        queried_scores = (
-            oracle(np.asarray(selected_states, dtype=np.int64)).detach().cpu().numpy().tolist()
-        )
+        queried_scores = query_oracle_scores(oracle, selected_states)
 
         states.extend(selected_states)
         scores.extend(float(s) for s in queried_scores)
@@ -706,6 +682,7 @@ def run_hybrid(
             max_length=int(env_cfg["max_length"]),
             num_tokens=num_tokens,
             device=device,
+            gflownet_root=gflownet_root,
         )
         surrogate.fit(train_states, train_scores)
         surrogate_fit_count += 1
@@ -855,9 +832,7 @@ def run_hybrid(
                     diversity_weight=max(diversity_weight * 0.5, 0.05),
                 )
                 selected_states = candidate_matrix[selected_idx].tolist()
-                queried_scores = (
-                    oracle(np.asarray(selected_states, dtype=np.int64)).detach().cpu().numpy().tolist()
-                )
+                queried_scores = query_oracle_scores(oracle, selected_states)
                 states.extend(selected_states)
                 scores.extend(float(s) for s in queried_scores)
                 final_selection_log = {
@@ -924,15 +899,12 @@ def run_hybrid(
         "optimum_score": optimum_score,
         "stopped_reason": last_gflownet_stop_reason,
         "sampling_strategy": initial_sampling_strategy,
-        "candidate_sampling_strategy": "gflownet_only",
+        "candidate_sampling_strategy": "gflownet",
     }
     if optimum_info.get("optimum_words"):
         result["optimum_words"] = list(optimum_info["optimum_words"])
         result["optimum_word_count"] = int(optimum_info["optimum_word_count"])
         result["optimum_source"] = str(optimum_info["optimum_source"])
-
-    if logger is not None:
-        logger.dump_summary(result, filename="summary_hybrid.json")
 
     if gfn is not None and hasattr(gfn, "logger"):
         gfn.logger.end()

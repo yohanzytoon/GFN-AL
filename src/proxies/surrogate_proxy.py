@@ -44,7 +44,7 @@ class SurrogateProxy(Proxy):
     Plausibility modes
     ------------------
     additive        : reward += plausibility_weight × plausibility(x)
-                      Shifts all candidates uniformly — the original behaviour.
+                      Adds a fixed plausibility prior to each reward.
     multiplicative  : reward *= 1 + plausibility_weight × plausibility(x)
                       Amplifies word-like candidates *proportionally*: a
                       high-scoring word-like state gets a larger absolute boost
@@ -74,6 +74,11 @@ class SurrogateProxy(Proxy):
         self.beta_scale = float(beta_scale)
         self.score_max = max(float(score_max), 1e-6)
         self.plausibility_mode = str(plausibility_mode).lower()
+        if self.plausibility_mode not in {"additive", "multiplicative"}:
+            raise ValueError(
+                f"Unsupported plausibility_mode: {self.plausibility_mode!r}. "
+                "Use one of {'additive', 'multiplicative'}."
+            )
         self.max_length = int(max_length) if max_length is not None else None
         self.min_length = max(int(min_length), 0)
         self.gflownet_root = str(gflownet_root) if gflownet_root is not None else None
