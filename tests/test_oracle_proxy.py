@@ -28,6 +28,8 @@ def test_oracle_proxy_budget_enforced():
     scores = proxy(states)
     assert scores.shape[0] == 3
     assert proxy.call_count == 3
+    assert proxy.call_history[0]["states"] == states.tolist()
+    assert proxy.call_history[0]["scores"] == scores.detach().cpu().tolist()
 
     with pytest.raises(RuntimeError):
         proxy(states[:1])

@@ -194,7 +194,7 @@ def _warm_start_gflownet(gfn, previous_gfn) -> None:
     if hasattr(gfn, "opt") and hasattr(previous_gfn, "opt"):
         try:
             gfn.opt.load_state_dict(previous_gfn.opt.state_dict())
-        except Exception:
+        except (KeyError, RuntimeError, ValueError):
             pass
 
 
@@ -234,6 +234,23 @@ def run_oracle_gflownet(
         },
     )
 
+    sampled_states = sample_gflownet_terminating_states(
+        gfn,
+        int(gflownet_cfg.get("evaluation_samples", 256)),
+    )
+    sampled_scores = []
+    remaining_budget = getattr(gfn.proxy, "remaining_budget", float("inf"))
+    if sampled_states and remaining_budget > 0:
+        if remaining_budget == float("inf"):
+            sample_budget = len(sampled_states)
+        else:
+            sample_budget = min(len(sampled_states), max(int(remaining_budget), 0))
+        if sample_budget > 0:
+            sampled_subset = np.asarray(sampled_states[:sample_budget], dtype=np.int64)
+            sampled_scores = (
+                gfn.proxy(sampled_subset).detach().cpu().numpy().astype(float).tolist()
+            )
+
     queried_states, queried_scores = flatten_oracle_history(gfn.proxy.call_history)
     curve = build_query_curve(
         queried_scores,
@@ -247,21 +264,6 @@ def run_oracle_gflownet(
         top_k=10,
         pad_value=0,
     )
-
-    sampled_states = sample_gflownet_terminating_states(
-        gfn,
-        int(gflownet_cfg.get("evaluation_samples", 256)),
-    )
-    sampled_scores = []
-    if sampled_states and getattr(gfn.proxy, "remaining_budget", float("inf")) > 0:
-        sample_budget = int(
-            min(len(sampled_states), max(int(gfn.proxy.remaining_budget), 0))
-        )
-        if sample_budget > 0:
-            sampled_subset = np.asarray(sampled_states[:sample_budget], dtype=np.int64)
-            sampled_scores = (
-                gfn.proxy(sampled_subset).detach().cpu().numpy().astype(float).tolist()
-            )
 
     result = {
         "method": "gflownet_oracle",
@@ -287,9 +289,6 @@ def run_oracle_gflownet(
         result["optimum_words"] = list(optimum_info["optimum_words"])
         result["optimum_word_count"] = int(optimum_info["optimum_word_count"])
         result["optimum_source"] = str(optimum_info["optimum_source"])
-
-    if logger is not None:
-        logger.dump_summary(result, filename="summary_gflownet.json")
 
     if hasattr(gfn, "logger"):
         gfn.logger.end()

@@ -14,6 +14,7 @@ from proxies.oracle_proxy import OracleProxy
 from training.common import (
     build_surrogate_from_config,
     filter_new_states,
+    query_oracle_scores,
 )
 from training.dataset import (
     deduplicate_state_scores,
@@ -67,6 +68,8 @@ def run_active_learning(
     max_rounds = int(active_cfg.get("max_rounds", 200))
     acquisition_cfg = dict(active_cfg.get("acquisition", {}))
     acquisition_name = str(acquisition_cfg.get("name", "ucb")).lower()
+    if acquisition_name != "ucb":
+        raise ValueError(f"Unsupported acquisition: {acquisition_name}. Use 'ucb'.")
     beta = float(acquisition_cfg.get("beta", 2.0))
     beta_min = float(acquisition_cfg.get("beta_min", beta))
     surrogate_cfg = dict(active_cfg.get("surrogate", {}))
@@ -103,7 +106,7 @@ def run_active_learning(
         seed=seed,
         gflownet_root=gflownet_root,
     )
-    scores = oracle(env.states2proxy(states)).detach().cpu().numpy().astype(float).tolist()
+    scores = query_oracle_scores(oracle, env.states2proxy(states))
 
     round_logs: list[dict[str, Any]] = []
     surrogate = None
@@ -122,6 +125,7 @@ def run_active_learning(
             max_length=int(env_cfg["max_length"]),
             num_tokens=num_tokens,
             device=device,
+            gflownet_root=gflownet_root,
         )
         surrogate.fit(train_states, train_scores)
 
@@ -171,9 +175,7 @@ def run_active_learning(
             diversity_weight=diversity_weight,
         )
         selected_states = candidate_matrix[selected_idx].tolist()
-        queried_scores = (
-            oracle(np.asarray(selected_states, dtype=np.int64)).detach().cpu().numpy().tolist()
-        )
+        queried_scores = query_oracle_scores(oracle, selected_states)
 
         states.extend(selected_states)
         scores.extend(float(s) for s in queried_scores)
@@ -250,8 +252,5 @@ def run_active_learning(
         result["optimum_words"] = list(optimum_info["optimum_words"])
         result["optimum_word_count"] = int(optimum_info["optimum_word_count"])
         result["optimum_source"] = str(optimum_info["optimum_source"])
-
-    if logger is not None:
-        logger.dump_summary(result, filename="summary_active.json")
 
     return result

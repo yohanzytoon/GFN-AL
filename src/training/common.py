@@ -16,8 +16,12 @@ def build_surrogate_from_config(
     max_length: int,
     num_tokens: int,
     device: str,
+    gflownet_root: str | None = None,
 ):
     """Instantiate a surrogate backend from config."""
+    surrogate_cfg = dict(surrogate_cfg)
+    if gflownet_root is not None:
+        surrogate_cfg.setdefault("gflownet_root", gflownet_root)
     return build_surrogate(
         surrogate_cfg,
         max_length=max_length,
@@ -58,6 +62,23 @@ def flatten_oracle_history(
     return states, scores
 
 
+def query_oracle_scores(oracle, states: Iterable[Iterable[int]]) -> list[float]:
+    """Query a batch of integer states and return Python float scores."""
+    oracle_states = (
+        states
+        if isinstance(states, np.ndarray) or hasattr(states, "detach")
+        else np.asarray(list(states), dtype=np.int64)
+    )
+    return (
+        oracle(oracle_states)
+        .detach()
+        .cpu()
+        .numpy()
+        .astype(float)
+        .tolist()
+    )
+
+
 def compute_plausibility_bonus(
     candidate_matrix: np.ndarray,
     max_length: int,
@@ -96,5 +117,3 @@ def compute_plausibility_bonus(
     # Real English words usually score > -3, garbage scores < -5.
     plaus_norm = (plaus + 6.0).clip(0.0, 5.0) / 5.0
     return plaus_norm * weight
-
-

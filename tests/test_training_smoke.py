@@ -48,9 +48,8 @@ def _base_config(seed: int = 0):
             "initial_size": 8,
             "batch_size": 4,
             "max_rounds": 2,
-            "sampling_strategy": "uniform",
             "initial_sampling_strategy": "uniform",
-            "fallback_sampling_strategy": "uniform",
+            "bootstrap_sampling_strategy": "uniform",
             "candidate_unique": True,
             "min_length": 3,
             "diversity_weight": 0.0,
@@ -109,9 +108,16 @@ class _FakeProxy:
         import torch
 
         arr = np.asarray(states)
+        scores = [1.0] * arr.shape[0]
         self.call_count += arr.shape[0]
         self.remaining_budget = max(self.remaining_budget - arr.shape[0], 0)
-        return torch.tensor([1.0] * arr.shape[0], dtype=torch.float32)
+        self.call_history.append(
+            {
+                "states": arr.astype(int).tolist(),
+                "scores": scores,
+            }
+        )
+        return torch.tensor(scores, dtype=torch.float32)
 
 
 class _FakeGFN:
@@ -134,6 +140,7 @@ def test_oracle_gflownet_summary_with_fake_backend(tmp_path: Path, monkeypatch):
     result = run_oracle_gflownet(cfg, output_dir=tmp_path / "gflownet", logger=None)
     assert result["method"] == "gflownet_oracle"
     assert result["best_score"] == 4.0
+    assert result["oracle_queries"] == len(result["scores"])
 
 
 def test_hybrid_smoke_with_fake_gflownet_backend(tmp_path: Path, monkeypatch):
@@ -153,7 +160,7 @@ def test_hybrid_smoke_with_fake_gflownet_backend(tmp_path: Path, monkeypatch):
     )
     result = run_hybrid(cfg, output_dir=tmp_path / "hybrid", logger=None)
     assert result["method"] == "hybrid"
-    assert result["candidate_sampling_strategy"] == "gflownet_only"
+    assert result["candidate_sampling_strategy"] == "gflownet"
     assert result["oracle_queries"] <= 40
 
 

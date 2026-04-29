@@ -9,7 +9,7 @@ import numpy as np
 import torch
 
 from utils.device import resolve_device
-from utils.scrabble import SCRABBLE_LETTER_SCORES, VOWEL_TOKENS, domain_features, ngram_plausibility, vocabulary_bigram_model
+from utils.scrabble import SCRABBLE_LETTER_SCORES, domain_features, ngram_plausibility, vocabulary_bigram_model
 
 try:
     from botorch.fit import fit_gpytorch_mll
@@ -39,6 +39,7 @@ class BoTorchGPSurrogate:
         fit_maxiter: int = 100,
         prefer_botorch: bool = True,
         max_train_points: int = 500,
+        gflownet_root: str | None = None,
     ):
         self.max_length = max_length
         self.num_tokens = num_tokens
@@ -46,6 +47,7 @@ class BoTorchGPSurrogate:
         self.fit_maxiter = fit_maxiter
         self.prefer_botorch = prefer_botorch
         self.max_train_points = int(max_train_points) if max_train_points else 0
+        self.gflownet_root = str(gflownet_root) if gflownet_root is not None else None
         if self.device.type == "mps":
             if BOTORCH_AVAILABLE and prefer_botorch:
                 warnings.warn(
@@ -108,7 +110,10 @@ class BoTorchGPSurrogate:
         dom_feats = domain_features(states, self.max_length)
 
         # Fill in ngram plausibility if the vocabulary bigram model is available.
-        bigram_model = vocabulary_bigram_model(max_length=self.max_length)
+        bigram_model = vocabulary_bigram_model(
+            max_length=self.max_length,
+            gflownet_root=self.gflownet_root,
+        )
         if bigram_model is not None:
             ngram_scores = ngram_plausibility(states, bigram_model)
             # Normalise to roughly [0, 1] range.  Typical values are in [-5, 0].
@@ -222,6 +227,7 @@ class BoTorchGPSurrogate:
             "fit_maxiter": self.fit_maxiter,
             "prefer_botorch": self.prefer_botorch,
             "max_train_points": self.max_train_points,
+            "gflownet_root": self.gflownet_root,
         }
         if self.backend == "botorch":
             assert self._model is not None
@@ -260,6 +266,7 @@ class BoTorchGPSurrogate:
             fit_maxiter=int(payload.get("fit_maxiter", 100)),
             prefer_botorch=bool(payload.get("prefer_botorch", True)),
             max_train_points=int(payload.get("max_train_points", 500)),
+            gflownet_root=payload.get("gflownet_root"),
         )
         model.backend = str(payload["backend"])
         if model.backend == "botorch":
