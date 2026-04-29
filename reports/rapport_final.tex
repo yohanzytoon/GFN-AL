@@ -201,7 +201,7 @@ Le GFlowNet direct reçoit la récompense de l'oracle réel à travers un proxy 
 
 Le GFlowNet n'a \emph{aucun} mécanisme d'acquisition actif~: toutes les requêtes sont utilisées directement pour l'entraînement.
 
-\subsection{Méthode hybride GFlowNet-Only}
+\subsection{Méthode hybride}
 
 La méthode hybride est la contribution principale du projet. Elle combine un GFlowNet entraîné sur une récompense surrogat bon marché avec une sélection active pour décider quels candidats méritent une vraie requête oracle. Le pipeline est illustré en Figure~\ref{fig:hybrid_arch}.
 
@@ -237,7 +237,7 @@ La méthode hybride est la contribution principale du projet. Elle combine un GF
   \draw[arr] (oracle2) -- (retrain);
   \draw[arr] (retrain.west) -- ++(-1.4,0) |- (gfntrain.west);
 \end{tikzpicture}
-\caption{Architecture de la méthode hybride GFlowNet-Only. Le GFlowNet est entraîné sur une récompense surrogat bon marché (GP) au lieu de l'oracle réel. Seule la sélection finale d'acquisition consomme le budget oracle. Le GFlowNet est ré-entraîné tous les 6 rounds avec warm start.}
+\caption{Architecture de la méthode hybride. Le GFlowNet est entraîné sur une récompense surrogat bon marché (GP) au lieu de l'oracle réel. Seule la sélection finale d'acquisition consomme le budget oracle. Le GFlowNet est ré-entraîné tous les 6 rounds avec warm start.}
 \label{fig:hybrid_arch}
 \end{figure}
 
@@ -276,7 +276,7 @@ Dans la récompense surrogat du GFlowNet, la plausibilité est appliquée en mod
 % ─── 4. Résultats ─────────────────────────────────────────────────────────────
 \section{Résultats}
 
-Les trois méthodes retenues pour la comparaison sont~: l'apprentissage actif (AL), le GFlowNet direct (GFN), et la méthode hybride GFlowNet-only. La baseline supervisée et l'ancien hybride complet ont été exclus de la comparaison~: leurs résultats ne sont pas directement comparables aux méthodes GFlowNet (voir Section~\ref{sec:failed}). Toutes les méthodes disposent d'exactement \textbf{1000 requêtes oracles réelles}.
+Les trois méthodes retenues pour la comparaison sont~: l'apprentissage actif (AL), le GFlowNet direct (GFN), et la méthode hybride. La baseline supervisée et l'ancien hybride complet ont été exclus de la comparaison~: leurs résultats ne sont pas directement comparables aux méthodes GFlowNet (voir Section~\ref{sec:failed}). Toutes les méthodes disposent d'exactement \textbf{1000 requêtes oracles réelles}.
 
 Deux runs sont présentés~: un meilleur run sur 5 seeds (\S\ref{ssec:bestrun}) qui illustre le potentiel des méthodes dans des conditions favorables, et un run reproductible sur 1 seed (\S\ref{ssec:reprodrun}) représentatif des performances typiques observées de manière régulière.
 
@@ -295,7 +295,7 @@ Méthode & Meilleur score & Top-10 moyen & Score moyen & Mots valides (\%) & $Q_
 \midrule
 Apprentissage actif   & 14{,}4  & 13{,}10 & 1{,}075 & 12{,}9  & 297{,}0   \\
 GFlowNet direct       & 12{,}6  & 9{,}36  & 0{,}269 & 6{,}3   & 377{,}0  \\
-Hybride GFlowNet-only & 14{,}2  & 13{,}20 & 1{,}216 & 14{,}6  & 148{,}2   \\
+Hybride & 14{,}2  & 13{,}20 & 1{,}216 & 14{,}6  & 148{,}2   \\
 \bottomrule
 \end{tabular}
 }
@@ -319,7 +319,7 @@ Méthode & Meilleur score & Top-10 moyen & Score moyen & Mots valides (\%) & $Q_
 \midrule
 Apprentissage actif   & 10   & 9{,}1  & 1{,}208 & 24{,}7 & 105 \\
 GFlowNet direct       & 14   & 9{,}6  & 0{,}298 & 6{,}7  & 345 \\
-Hybride GFlowNet-only & 15   & 9{,}3  & 0{,}16  & 2{,}2  & 190 \\
+Hybride & 15   & 9{,}3  & 0{,}16  & 2{,}2  & 190 \\
 \bottomrule
 \end{tabular}
 }
@@ -334,7 +334,8 @@ L'AL présente un profil très différent selon le run. Dans le meilleur run (5 
 \paragraph{GFlowNet direct~: bon pic, mauvaise frontière.}
 Le GFN produit de bons scores individuels (12,6--14 selon le run) mais une frontière faible~: score moyen 0,269--0,298 et validité 6,3--6,7\,\%. Il est capable de trouver de bonnes séquences ponctuellement mais ne construit pas un ensemble dense de mots valides. La raison fondamentale est la rareté de la récompense~: avec 1000 requêtes, le GFN n'a pas assez de signal pour apprendre une politique généralisable à l'ensemble du vocabulaire.
 
-\paragraph{Hybride GFlowNet-only~: résultats très variables.}
+\paragraph{Hybride~: résultats très variables.}
+
 L'hybride présente la plus grande variance entre les deux runs. Dans le meilleur run, il domine toutes les méthodes sur les métriques de frontière (validité 14,6\,\%, score moyen 1,216). Dans le run reproductible, sa frontière s'effondre~: validité 2,2\,\%, score moyen 0,16, malgré le meilleur score individuel (15). Ce paradoxe révèle l'instabilité fondamentale du pipeline~: le GFlowNet guidé par surrogate peut concentrer son exploration sur quelques zones prometteuses (donnant un bon pic), ou se piéger dans une région sous-optimale (donnant une mauvaise frontière).
 
 \paragraph{Tension exploitation / exploration.}
@@ -360,7 +361,7 @@ Deux méthodes ont été développées et archivées mais exclues de la comparai
 La première approche était un MLP supervisé avec deux têtes (validité et score), entraîné sur un dataset aléatoire. Son problème fondamental est conceptuel~: \textbf{elle n'est pas un bon baseline de comparaison pour les méthodes GFlowNet}. Le MLP ne modélise pas d'incertitude, ne fait pas de sélection active, et son mécanisme de décision est radicalement différent. Comparer ses résultats bruts à ceux d'un GFN ou d'un AL reviendrait à mélanger des philosophies incompatibles.
 
 \paragraph{Hybride complet (archivé).}
-L'ancien hybride combinait le GFlowNet avec plusieurs composantes additionnelles. Il produisait des résultats numériques parfois intéressants, mais \textbf{il ne constitue pas une comparaison valide face au GFlowNet seul}~: son pipeline de sélection est beaucoup plus élaboré et ses résultats dépendent fortement de composantes non-GFlowNet. Il est donc impossible d'isoler la contribution réelle du GFlowNet dans ses performances. Pour cette raison, seule la méthode hybride GFlowNet-only est conservée dans la comparaison.
+L'ancien hybride combinait le GFlowNet avec plusieurs composantes additionnelles. Il produisait des résultats numériques parfois intéressants, mais \textbf{il ne constitue pas une comparaison valide face au GFlowNet seul}~: son pipeline de sélection est beaucoup plus élaboré et ses résultats dépendent fortement de composantes non-GFlowNet. Il est donc impossible d'isoler la contribution réelle du GFlowNet dans ses performances. Pour cette raison, seule la méthode hybride est conservée dans la comparaison.
 
 \subsection{Deep ensembles comme surrogate}
 
@@ -398,7 +399,7 @@ Ce projet a construit et comparé une pile complète de méthodes pour l'explora
 
 \textbf{Résultat clé du GFlowNet direct~:} le GFN peut atteindre de bons scores individuels mais échoue à construire une frontière dense. Sous 1000 requêtes, la rareté de la récompense ne lui laisse pas assez de signal pour apprendre une politique généralisable.
 
-\textbf{Résultat clé de la méthode hybride~:} l'hybride GFlowNet-only est la méthode la plus instable. Dans un run favorable (meilleur run sur 5 seeds), il surpasse l'AL sur toutes les métriques de frontière. Dans un run typique, sa frontière s'effondre tout en atteignant le meilleur score individuel. Cette instabilité est une limite fondamentale~: le pipeline dépend fortement de la qualité du surrogate au moment où le GFlowNet est activé.
+\textbf{Résultat clé de la méthode hybride~:} l'hybride est la méthode la plus instable. Dans un run favorable (meilleur run sur 5 seeds), il surpasse l'AL sur toutes les métriques de frontière. Dans un run typique, sa frontière s'effondre tout en atteignant le meilleur score individuel. Cette instabilité est une limite fondamentale~: le pipeline dépend fortement de la qualité du surrogate au moment où le GFlowNet est activé.
 
 \textbf{Note sur l'évolution des conclusions~:} dans une version antérieure de ce rapport (Devoir 5), la conclusion affirmait que la méthode hybride était la meilleure approche, basée sur un run particulièrement favorable. Cette conclusion s'est avérée fragile~: elle ne tient pas à travers les runs répétés. La leçon principale est qu'une conclusion sur une méthode stochastique ne peut pas reposer sur un seul run, même bon. La vraie conclusion est donc plus nuancée~: \textbf{il n'y a pas de méthode dominante sur tous les axes et dans toutes les conditions}. L'AL est la méthode la plus fiable ; l'hybride peut la surpasser ponctuellement mais pas de manière systématique.
 
