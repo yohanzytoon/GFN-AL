@@ -61,6 +61,7 @@ class SurrogateProxy(Proxy):
         score_max: float = 45.0,
         plausibility_mode: str = "additive",
         max_length: int | None = None,
+        min_length: int = 0,
         gflownet_root: str | None = None,
         plausibility_weight: float = 0.0,
         stats_output_path: str | None = None,
@@ -74,6 +75,7 @@ class SurrogateProxy(Proxy):
         self.score_max = max(float(score_max), 1e-6)
         self.plausibility_mode = str(plausibility_mode).lower()
         self.max_length = int(max_length) if max_length is not None else None
+        self.min_length = max(int(min_length), 0)
         self.gflownet_root = str(gflownet_root) if gflownet_root is not None else None
         self.plausibility_weight = float(plausibility_weight)
         self.stats_output_path = Path(stats_output_path) if stats_output_path else None
@@ -166,6 +168,17 @@ class SurrogateProxy(Proxy):
                 # Original additive behaviour.
                 reward_values = reward_values + plaus_tensor
 
+        if self.min_length > 0:
+            lengths = np.count_nonzero(states_np != 0, axis=1)
+            too_short = torch.as_tensor(
+                lengths < self.min_length,
+                dtype=torch.bool,
+                device=self.device,
+            )
+            if too_short.any():
+                reward_values = reward_values.clone()
+                reward_values[too_short] = float(max(self.reward_min, 0.0))
+
         self._record_calls(states_np, reward_values)
         return tfloat(reward_values, device=self.device, float_type=self.float)
 
@@ -209,6 +222,7 @@ class SurrogateProxy(Proxy):
             "plausibility_mode": self.plausibility_mode,
             "plausibility_weight": self.plausibility_weight,
             "max_length": self.max_length,
+            "min_length": self.min_length,
             "call_count": int(self.call_count),
             "batch_count": int(self.batch_count),
             "call_history": self.call_history,

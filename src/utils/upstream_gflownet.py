@@ -64,6 +64,3 @@ def compose_upstream_train_config(
     return cfg
 
 
-def config_to_dict(cfg) -> dict:
-    """Convert an OmegaConf config to a plain dict."""
-    return OmegaConf.to_container(cfg, resolve=True)

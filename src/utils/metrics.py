@@ -185,17 +185,6 @@ def regression_metrics(y_true: Sequence[float], y_pred: Sequence[float]) -> dict
     return {"rmse": float(np.sqrt(mse)), "mae": float(mae), "r2": float(r2)}
 
 
-def auc(values: Sequence[float], x: Sequence[float] | None = None) -> float:
-    """Area under curve by trapezoidal integration."""
-    y = np.asarray(values, dtype=float)
-    if y.size == 0:
-        return 0.0
-    if x is None:
-        x = np.arange(y.size)
-    x_values = np.asarray(x, dtype=float)
-    return float(np.trapz(y, x_values))
-
-
 def cohen_d_paired(method_a: Sequence[float], method_b: Sequence[float]) -> float:
     """Cohen's d for paired samples."""
     a = np.asarray(method_a, dtype=float)

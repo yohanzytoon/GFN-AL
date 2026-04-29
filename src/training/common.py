@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
 
-from acquisition.ucb import ucb_scores
 from surrogate.factory import build_surrogate
 from utils.scrabble import ngram_plausibility, vocabulary_bigram_model
 
@@ -100,95 +98,3 @@ def compute_plausibility_bonus(
     return plaus_norm * weight
 
 
-def propose_local_search_candidates(
-    *,
-    env,
-    surrogate,
-    anchor_states: list[list[int]],
-    proposal_size: int,
-    beam_width: int,
-    n_steps: int,
-    neighbors_per_step: int,
-    sampling_strategy: str,
-    min_length: int,
-    candidate_unique: bool,
-    seen_states: Iterable[Iterable[int]],
-    seed: int,
-    beta: float = 2.0,
-    mutation_edits: int = 1,
-    max_length: int | None = None,
-    gflownet_root: str | None = None,
-    plausibility_weight: float = 2.0,
-) -> tuple[list[list[int]], dict[str, int]]:
-    """Optimize the acquisition over a discrete neighborhood by multi-start local search."""
-    from training.dataset import sample_mutated_states
-
-    if (
-        proposal_size <= 0
-        or beam_width <= 0
-        or n_steps <= 0
-        or neighbors_per_step <= 0
-        or len(anchor_states) == 0
-    ):
-        return [], {"surrogate_queries": 0}
-
-    beam_width = max(int(beam_width), 1)
-    n_steps = max(int(n_steps), 1)
-    neighbors_per_step = max(int(neighbors_per_step), 1)
-    proposal_size = max(int(proposal_size), beam_width)
-
-    local_seen = {tuple(int(x) for x in state) for state in seen_states}
-    scored_candidates: dict[tuple[int, ...], float] = {}
-    surrogate_queries = 0
-
-    beam = [list(state) for state in anchor_states[:beam_width]]
-    for step in range(n_steps):
-        neighbor_states = sample_mutated_states(
-            env,
-            beam,
-            n_states=beam_width * neighbors_per_step,
-            sampling_strategy=sampling_strategy,
-            min_length=min_length,
-            unique=candidate_unique,
-            seed=seed + step,
-            max_mutations=mutation_edits,
-        )
-        filtered_neighbors = filter_new_states(neighbor_states, local_seen)
-        if len(filtered_neighbors) == 0:
-            break
-
-        candidate_matrix = np.asarray(filtered_neighbors, dtype=np.int64)
-        mean, std = surrogate.predict(candidate_matrix, return_std=True)
-        if max_length is not None and plausibility_weight != 0.0:
-            mean = mean + compute_plausibility_bonus(
-                candidate_matrix,
-                int(max_length),
-                gflownet_root=gflownet_root,
-                weight=float(plausibility_weight),
-            )
-        scores = ucb_scores(mean=mean, std=std, beta=beta)
-        surrogate_queries += int(candidate_matrix.shape[0])
-
-        order = np.argsort(np.asarray(scores, dtype=float))[::-1]
-        beam = []
-        for idx in order[:beam_width]:
-            state = candidate_matrix[int(idx)].tolist()
-            key = tuple(int(x) for x in state)
-            local_seen.add(key)
-            scored_candidates[key] = float(scores[int(idx)])
-            beam.append(state)
-
-        # Keep additional high-scoring neighbors as final proposals even if they
-        # are not retained in the beam for the next search step.
-        keep = min(max(beam_width * 2, 1), int(candidate_matrix.shape[0]))
-        for idx in order[:keep]:
-            key = tuple(int(x) for x in candidate_matrix[int(idx)].tolist())
-            local_seen.add(key)
-            scored_candidates[key] = max(
-                float(scores[int(idx)]),
-                scored_candidates.get(key, float("-inf")),
-            )
-
-    ranked = sorted(scored_candidates.items(), key=lambda item: item[1], reverse=True)
-    proposals = [list(key) for key, _ in ranked[:proposal_size]]
-    return proposals, {"surrogate_queries": int(surrogate_queries)}

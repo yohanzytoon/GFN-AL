@@ -1,18 +1,17 @@
 """Hybrid GFlowNet + Active Learning — GFlowNet-only candidate generation.
 
-Identical to train_hybrid.py in structure but removes all non-GFlowNet candidate
-sources (random pool, mutation pool, local search).  The only candidates fed to
-the acquisition function are states sampled directly from the GFlowNet trained on
-the surrogate as a proxy.
+The only candidates fed to the acquisition function are states sampled directly
+from a GFlowNet trained on the surrogate as a proxy reward.
 
-Before the first GFlowNet is trained, the surrogate is bootstrapped with a
-heuristic oracle-labelled warm-up phase so the fake oracle is not learned from
-near-random zero-heavy data alone.
+Before the first GFlowNet trains, the surrogate is bootstrapped with a
+heuristic oracle-labelled warm-up phase so it is not learned from near-random
+zero-heavy data alone.
 """
 
 from __future__ import annotations
 
 import copy
+import pickle
 import time
 from pathlib import Path
 from typing import Any
@@ -49,6 +48,10 @@ def _sample_gfn_only_candidates(
     gflownet_sample_batches: int,
     gflownet_max_sample_batches: int,
     min_required: int,
+    min_length: int = 0,
+    max_length: int | None = None,
+    gflownet_root: str | None = None,
+    min_plausibility: float | None = None,
 ) -> tuple[list[list[int]], dict[str, int]]:
     """Sample candidates exclusively from the GFlowNet.
 
@@ -82,11 +85,128 @@ def _sample_gfn_only_candidates(
         )
         batches_used += 1
         filtered = filter_new_states(gflownet_candidates, seen_states)
+        filtered = _filter_gfn_candidates(
+            filtered,
+            min_length=min_length,
+            max_length=max_length,
+            gflownet_root=gflownet_root,
+            min_plausibility=min_plausibility,
+        )
 
     return filtered, {
         "gflownet_candidates": int(len(gflownet_candidates)),
         "gflownet_sample_batches_used": int(batches_used),
+        "unique_candidates_after_quality_filter": int(len(filtered)),
     }
+
+
+def _state_length(state: list[int] | np.ndarray) -> int:
+    array = np.asarray(state, dtype=np.int64).reshape(-1)
+    zero_idx = np.where(array == 0)[0]
+    if zero_idx.size == 0:
+        return int(array.shape[0])
+    return int(zero_idx[0])
+
+
+def _filter_gfn_candidates(
+    candidate_states: list[list[int]],
+    *,
+    min_length: int = 0,
+    max_length: int | None = None,
+    gflownet_root: str | None = None,
+    min_plausibility: float | None = None,
+) -> list[list[int]]:
+    """Drop GFlowNet samples that cannot be useful oracle queries."""
+    if not candidate_states:
+        return []
+
+    filtered = [
+        state
+        for state in candidate_states
+        if int(_state_length(state)) >= int(min_length)
+    ]
+    if (
+        not filtered
+        or min_plausibility is None
+        or float(min_plausibility) <= 0.0
+        or max_length is None
+    ):
+        return filtered
+
+    candidate_matrix = np.asarray(filtered, dtype=np.int64)
+    plausibility = compute_plausibility_bonus(
+        candidate_matrix,
+        int(max_length),
+        gflownet_root=gflownet_root,
+        weight=1.0,
+    )
+    # If the vocabulary model is unavailable, compute_plausibility_bonus returns
+    # all zeros. In that case, do not accidentally filter the whole GFN pool.
+    if np.max(plausibility) <= 0.0:
+        return filtered
+    keep = plausibility >= float(min_plausibility)
+    return candidate_matrix[keep].tolist()
+
+
+def _adaptive_proxy_score_max(
+    scores: list[float] | np.ndarray,
+    gflownet_cfg: dict[str, Any],
+    config: dict[str, Any],
+) -> float:
+    """Scale exp_beta rewards to the score range observed so far."""
+    configured = float(
+        gflownet_cfg.get(
+            "score_max",
+            config.get("metrics", {}).get("optimum_score", 45.0),
+        )
+    )
+    if not bool(gflownet_cfg.get("adaptive_score_max", False)):
+        return max(configured, 1e-6)
+
+    values = np.asarray(scores, dtype=float)
+    positives = values[values > 0.0]
+    floor = float(gflownet_cfg.get("score_max_floor", 10.0))
+    quantile = float(gflownet_cfg.get("score_max_quantile", 0.9))
+    if positives.size == 0:
+        return max(floor, 1e-6)
+
+    adaptive = max(
+        floor,
+        float(np.quantile(positives, np.clip(quantile, 0.0, 1.0))),
+        float(np.max(positives)),
+    )
+    ceiling = gflownet_cfg.get("score_max_ceiling")
+    if ceiling is not None:
+        adaptive = min(adaptive, float(ceiling))
+    return max(adaptive, 1e-6)
+
+
+def _write_offline_train_dataset(
+    path: Path,
+    states: np.ndarray,
+    scores: np.ndarray,
+    *,
+    max_states: int,
+    min_score: float,
+) -> Path | None:
+    """Write high-value labelled states for upstream backward-dataset sampling."""
+    if max_states <= 0 or states.size == 0:
+        return None
+
+    scores_np = np.asarray(scores, dtype=float).reshape(-1)
+    states_np = np.asarray(states, dtype=np.int64)
+    ranked = np.argsort(scores_np)[::-1]
+    keep = [int(idx) for idx in ranked if scores_np[int(idx)] > float(min_score)]
+    if not keep:
+        keep = [int(idx) for idx in ranked[: min(max_states, len(ranked))]]
+    keep = keep[: int(max_states)]
+    if not keep:
+        return None
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as f:
+        pickle.dump({"samples": states_np[keep].tolist()}, f)
+    return path
 
 
 def _bootstrap_oracle_dataset(
@@ -268,6 +388,33 @@ def run_hybrid_gfn_only(
     gflownet_min_positive_count = int(
         gflownet_schedule_cfg.get("min_positive_count", max(batch_size // 2, 8))
     )
+    offline_train_max_states = int(
+        gflownet_schedule_cfg.get("offline_train_max_states", 256)
+    )
+    offline_train_min_score = float(
+        gflownet_schedule_cfg.get("offline_train_min_score", 0.0)
+    )
+    gflownet_candidate_min_plausibility_cfg = gflownet_schedule_cfg.get(
+        "candidate_min_plausibility",
+        hybrid_cfg.get("gflownet_candidate_min_plausibility"),
+    )
+    gflownet_candidate_min_plausibility = (
+        None
+        if gflownet_candidate_min_plausibility_cfg is None
+        else float(gflownet_candidate_min_plausibility_cfg)
+    )
+    final_candidate_min_plausibility_cfg = gflownet_schedule_cfg.get(
+        "final_candidate_min_plausibility",
+        gflownet_candidate_min_plausibility,
+    )
+    final_candidate_min_plausibility = (
+        None
+        if final_candidate_min_plausibility_cfg is None
+        else float(final_candidate_min_plausibility_cfg)
+    )
+    final_gate_min_score_fraction = float(
+        gflownet_schedule_cfg.get("final_gate_min_score_fraction", 0.75)
+    )
 
     bootstrap_pool_size = int(
         hybrid_cfg.get(
@@ -404,6 +551,20 @@ def run_hybrid_gfn_only(
 
             gflownet_config = copy.deepcopy(config)
             gflownet_config["gflownet"] = copy.deepcopy(gflownet_schedule_cfg)
+            offline_train_path = _write_offline_train_dataset(
+                round_gflownet_dir / "offline_train.pkl",
+                train_states,
+                train_scores,
+                max_states=offline_train_max_states,
+                min_score=offline_train_min_score,
+            )
+            if offline_train_path is not None:
+                gflownet_config["gflownet"]["train_data_path"] = str(offline_train_path)
+            proxy_score_max = _adaptive_proxy_score_max(
+                train_scores,
+                gflownet_schedule_cfg,
+                config,
+            )
             gfn, stop_reason = _train_upstream_gflownet(
                 gflownet_config,
                 output_dir=round_gflownet_dir,
@@ -425,12 +586,7 @@ def run_hybrid_gfn_only(
                     "beta_scale": float(
                         gflownet_schedule_cfg.get("beta_scale", 5.0)
                     ),
-                    "score_max": float(
-                        gflownet_schedule_cfg.get(
-                            "score_max",
-                            config.get("metrics", {}).get("optimum_score", 45.0),
-                        )
-                    ),
+                    "score_max": float(proxy_score_max),
                     "plausibility_mode": str(
                         gflownet_schedule_cfg.get("plausibility_mode", "multiplicative")
                     ),
@@ -440,6 +596,7 @@ def run_hybrid_gfn_only(
                         gflownet_schedule_cfg.get("do_clip_rewards", True)
                     ),
                     "max_length": int(env_cfg["max_length"]),
+                    "min_length": int(min_length),
                     "gflownet_root": gflownet_root,
                     "plausibility_weight": float(plausibility_bonus_weight),
                     "stats_output_path": str(round_gflownet_dir / "surrogate_stats.json"),
@@ -459,6 +616,10 @@ def run_hybrid_gfn_only(
             gflownet_sample_batches=gflownet_sample_batches,
             gflownet_max_sample_batches=gflownet_max_sample_batches,
             min_required=batch_size,
+            min_length=min_length,
+            max_length=int(env_cfg["max_length"]),
+            gflownet_root=gflownet_root,
+            min_plausibility=gflownet_candidate_min_plausibility,
         )
 
         candidate_matrix = np.asarray(sampled_candidates, dtype=np.int64)
@@ -562,6 +723,20 @@ def run_hybrid_gfn_only(
 
             gflownet_config = copy.deepcopy(config)
             gflownet_config["gflownet"] = copy.deepcopy(gflownet_schedule_cfg)
+            offline_train_path = _write_offline_train_dataset(
+                final_gflownet_dir / "offline_train.pkl",
+                train_states,
+                train_scores,
+                max_states=offline_train_max_states,
+                min_score=offline_train_min_score,
+            )
+            if offline_train_path is not None:
+                gflownet_config["gflownet"]["train_data_path"] = str(offline_train_path)
+            proxy_score_max = _adaptive_proxy_score_max(
+                train_scores,
+                gflownet_schedule_cfg,
+                config,
+            )
             gfn, stop_reason = _train_upstream_gflownet(
                 gflownet_config,
                 output_dir=final_gflownet_dir,
@@ -577,12 +752,7 @@ def run_hybrid_gfn_only(
                     "beta_scale": float(
                         gflownet_schedule_cfg.get("beta_scale", 5.0)
                     ),
-                    "score_max": float(
-                        gflownet_schedule_cfg.get(
-                            "score_max",
-                            config.get("metrics", {}).get("optimum_score", 45.0),
-                        )
-                    ),
+                    "score_max": float(proxy_score_max),
                     "plausibility_mode": str(
                         gflownet_schedule_cfg.get("plausibility_mode", "multiplicative")
                     ),
@@ -592,6 +762,7 @@ def run_hybrid_gfn_only(
                         gflownet_schedule_cfg.get("do_clip_rewards", True)
                     ),
                     "max_length": int(env_cfg["max_length"]),
+                    "min_length": int(min_length),
                     "gflownet_root": gflownet_root,
                     "plausibility_weight": float(plausibility_bonus_weight),
                     "stats_output_path": str(final_gflownet_dir / "surrogate_stats.json"),
@@ -628,11 +799,16 @@ def run_hybrid_gfn_only(
             gflownet_sample_batches=final_gflownet_sample_batches,
             gflownet_max_sample_batches=final_gflownet_max_sample_batches,
             min_required=int(min(oracle.remaining_budget, final_candidate_pool_size)),
+            min_length=min_length,
+            max_length=int(env_cfg["max_length"]),
+            gflownet_root=gflownet_root,
+            min_plausibility=final_candidate_min_plausibility,
         )
         candidate_matrix = np.asarray(final_candidates, dtype=np.int64)
         if candidate_matrix.size > 0:
             candidate_pool_queries += int(candidate_matrix.shape[0])
             mean, std = surrogate.predict(candidate_matrix, return_std=True)
+            raw_mean = np.asarray(mean, dtype=float).copy()
             mean = mean + compute_plausibility_bonus(
                 candidate_matrix,
                 int(env_cfg["max_length"]),
@@ -641,37 +817,69 @@ def run_hybrid_gfn_only(
             )
 
             final_batch = int(min(oracle.remaining_budget, candidate_matrix.shape[0]))
-            selected_idx = select_acquisition_batch(
-                mean=mean,
-                std=std,
-                batch_size=final_batch,
-                candidate_states=candidate_matrix,
-                beta=final_beta,
-                diversity_weight=max(diversity_weight * 0.5, 0.1),
+            score_values = np.asarray(scores, dtype=float)
+            current_top = np.sort(score_values)[-min(10, score_values.size) :]
+            final_gate_threshold = (
+                float(np.mean(current_top)) * final_gate_min_score_fraction
+                if current_top.size > 0
+                else 0.0
             )
-            selected_states = candidate_matrix[selected_idx].tolist()
-            queried_scores = (
-                oracle(np.asarray(selected_states, dtype=np.int64)).detach().cpu().numpy().tolist()
-            )
-            states.extend(selected_states)
-            scores.extend(float(s) for s in queried_scores)
-            final_selection_log = {
-                "oracle_queries_before": int(oracle.call_count - len(selected_states)),
-                "oracle_queries_after": int(oracle.call_count),
-                "selected_candidates": int(len(selected_states)),
-                "best_selected_score": float(max(queried_scores)) if queried_scores else 0.0,
-                "mean_selected_score": float(np.mean(queried_scores)) if queried_scores else 0.0,
-                "gflownet_candidates": int(candidate_breakdown["gflownet_candidates"]),
-                "gflownet_sample_batches_used": int(
-                    candidate_breakdown["gflownet_sample_batches_used"]
-                ),
-                "candidate_pool_size": int(candidate_matrix.shape[0]),
-            }
-            if logger is not None:
-                logger.log_metrics(
-                    step=len(round_logs),
-                    metrics={"final_selection_queries": int(len(selected_states))},
+            if (
+                final_batch > 0
+                and final_gate_threshold > 0.0
+                and float(np.max(raw_mean)) < final_gate_threshold
+            ):
+                final_selection_log = {
+                    "skipped": True,
+                    "reason": "candidate_predictions_below_gate",
+                    "oracle_queries_before": int(oracle.call_count),
+                    "oracle_queries_after": int(oracle.call_count),
+                    "selected_candidates": 0,
+                    "best_selected_score": 0.0,
+                    "mean_selected_score": 0.0,
+                    "max_predicted_score": float(np.max(raw_mean)),
+                    "gate_threshold": float(final_gate_threshold),
+                    "gflownet_candidates": int(candidate_breakdown["gflownet_candidates"]),
+                    "gflownet_sample_batches_used": int(
+                        candidate_breakdown["gflownet_sample_batches_used"]
+                    ),
+                    "candidate_pool_size": int(candidate_matrix.shape[0]),
+                }
+            elif final_batch > 0:
+                selected_idx = select_acquisition_batch(
+                    mean=mean,
+                    std=std,
+                    batch_size=final_batch,
+                    candidate_states=candidate_matrix,
+                    beta=final_beta,
+                    diversity_weight=max(diversity_weight * 0.5, 0.05),
                 )
+                selected_states = candidate_matrix[selected_idx].tolist()
+                queried_scores = (
+                    oracle(np.asarray(selected_states, dtype=np.int64)).detach().cpu().numpy().tolist()
+                )
+                states.extend(selected_states)
+                scores.extend(float(s) for s in queried_scores)
+                final_selection_log = {
+                    "skipped": False,
+                    "oracle_queries_before": int(oracle.call_count - len(selected_states)),
+                    "oracle_queries_after": int(oracle.call_count),
+                    "selected_candidates": int(len(selected_states)),
+                    "best_selected_score": float(max(queried_scores)) if queried_scores else 0.0,
+                    "mean_selected_score": float(np.mean(queried_scores)) if queried_scores else 0.0,
+                    "max_predicted_score": float(np.max(raw_mean)),
+                    "gate_threshold": float(final_gate_threshold),
+                    "gflownet_candidates": int(candidate_breakdown["gflownet_candidates"]),
+                    "gflownet_sample_batches_used": int(
+                        candidate_breakdown["gflownet_sample_batches_used"]
+                    ),
+                    "candidate_pool_size": int(candidate_matrix.shape[0]),
+                }
+                if logger is not None:
+                    logger.log_metrics(
+                        step=len(round_logs),
+                        metrics={"final_selection_queries": int(len(selected_states))},
+                    )
 
     # --------------------------------------------------------------- summary
     curve = build_query_curve(scores, optimum_score=optimum_score)

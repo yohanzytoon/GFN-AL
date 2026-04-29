@@ -13,13 +13,10 @@ from environments.scrabble_oracle_env import ScrabbleOracleEnv
 from proxies.oracle_proxy import OracleProxy
 from training.common import (
     build_surrogate_from_config,
-    compute_plausibility_bonus,
     filter_new_states,
-    propose_local_search_candidates,
 )
 from training.dataset import (
     deduplicate_state_scores,
-    sample_mutated_states,
     sample_terminating_states,
 )
 from utils.logging import ExperimentLogger, set_global_seed
@@ -86,30 +83,8 @@ def run_active_learning(
     )
     min_length = int(active_cfg.get("min_length", 3))
     candidate_unique = bool(active_cfg.get("candidate_unique", True))
-    mutation_pool_size = int(active_cfg.get("mutation_pool_size", 0))
-    mutation_top_k = int(active_cfg.get("mutation_top_k", 16))
-    mutation_edits = int(active_cfg.get("mutation_edits", 2))
-    mutation_sampling_strategy = str(
-        active_cfg.get("mutation_sampling_strategy", candidate_sampling_strategy)
-    )
-    # Diversity weight controls the exploration-exploitation trade-off in
-    # batch selection.  Higher values select more structurally diverse
-    # batches, preventing wasted oracle queries on near-identical candidates.
     diversity_weight = float(active_cfg.get("diversity_weight", 0.3))
     gflownet_root = config.get("gflownet_root")
-    local_search_pool_size = int(active_cfg.get("local_search_pool_size", 0))
-    local_search_beam_width = int(active_cfg.get("local_search_beam_width", 12))
-    local_search_steps = int(active_cfg.get("local_search_steps", 3))
-    local_search_neighbors_per_step = int(
-        active_cfg.get("local_search_neighbors_per_step", 64)
-    )
-    local_search_sampling_strategy = str(
-        active_cfg.get("local_search_sampling_strategy", candidate_sampling_strategy)
-    )
-    local_search_mutation_edits = int(
-        active_cfg.get("local_search_mutation_edits", 1)
-    )
-    plausibility_bonus_weight = float(active_cfg.get("plausibility_bonus_weight", 2.0))
     num_tokens = int(env_cfg.get("num_tokens", 27))
     optimum_info = resolve_scrabble_optimum(
         max_length=int(env_cfg["max_length"]),
@@ -133,7 +108,6 @@ def run_active_learning(
     round_logs: list[dict[str, Any]] = []
     surrogate = None
     candidate_pool_queries = 0
-    proposal_surrogate_queries = 0
 
     for round_idx in range(max_rounds):
         if oracle.remaining_budget <= 0:
@@ -160,46 +134,7 @@ def run_active_learning(
             seed=seed + round_idx + 1,
             gflownet_root=gflownet_root,
         )
-        ranked_indices = np.argsort(np.asarray(scores, dtype=float))[::-1]
-        anchor_states = [
-            states[idx]
-            for idx in ranked_indices[: max(mutation_top_k, 0)]
-        ]
-        mutation_candidates = sample_mutated_states(
-            env,
-            anchor_states,
-            mutation_pool_size,
-            sampling_strategy=mutation_sampling_strategy,
-            min_length=min_length,
-            unique=candidate_unique,
-            seed=seed + 20_000 + round_idx,
-            max_mutations=mutation_edits,
-            gflownet_root=gflownet_root,
-        )
-        local_search_candidates, local_search_stats = propose_local_search_candidates(
-            env=env,
-            surrogate=surrogate,
-            anchor_states=anchor_states,
-            proposal_size=local_search_pool_size,
-            beam_width=local_search_beam_width,
-            n_steps=local_search_steps,
-            neighbors_per_step=local_search_neighbors_per_step,
-            sampling_strategy=local_search_sampling_strategy,
-            min_length=min_length,
-            candidate_unique=candidate_unique,
-            seen_states=states,
-            seed=seed + 40_000 + round_idx,
-            beta=round_beta,
-            mutation_edits=local_search_mutation_edits,
-            max_length=int(env_cfg["max_length"]),
-            gflownet_root=gflownet_root,
-            plausibility_weight=plausibility_bonus_weight,
-        )
-        proposal_surrogate_queries += int(local_search_stats["surrogate_queries"])
-        filtered_candidates = filter_new_states(
-            candidate_states + mutation_candidates + local_search_candidates,
-            states,
-        )
+        filtered_candidates = filter_new_states(candidate_states, states)
         if len(filtered_candidates) < batch_size:
             filtered_candidates.extend(
                 filter_new_states(
@@ -222,15 +157,6 @@ def run_active_learning(
             break
         candidate_pool_queries += int(candidate_matrix.shape[0])
         mean, std = surrogate.predict(candidate_matrix, return_std=True)
-
-        # Add plausibility prior: biases acquisition toward word-like candidates,
-        # breaking the vicious cycle of selecting non-words and learning nothing.
-        mean = mean + compute_plausibility_bonus(
-            candidate_matrix,
-            int(env_cfg["max_length"]),
-            gflownet_root=gflownet_root,
-            weight=plausibility_bonus_weight,
-        )
 
         this_batch = int(min(batch_size, oracle.remaining_budget, candidate_matrix.shape[0]))
         if this_batch <= 0:
@@ -274,9 +200,6 @@ def run_active_learning(
             "surrogate_rmse": float(train_metrics["rmse"]),
             "acquisition": acquisition_name,
             "surrogate_type": getattr(surrogate, "surrogate_type", "unknown"),
-            "mutation_candidates": int(len(mutation_candidates)),
-            "local_search_candidates": int(len(local_search_candidates)),
-            "local_search_surrogate_queries_total": int(proposal_surrogate_queries),
         }
         round_logs.append(round_payload)
         if logger is not None:
@@ -314,14 +237,11 @@ def run_active_learning(
         else "unknown",
         "sampling_strategy": initial_sampling_strategy,
         "candidate_sampling_strategy": candidate_sampling_strategy,
-        "mutation_sampling_strategy": mutation_sampling_strategy,
-        "local_search_sampling_strategy": local_search_sampling_strategy,
         "scores": [float(s) for s in scores],
         "real_oracle_queries": int(oracle.call_count),
         "fake_oracle_queries": 0,
         "candidate_pool_queries": int(candidate_pool_queries),
-        "proposal_surrogate_queries": int(proposal_surrogate_queries),
-        "cheap_model_queries": int(candidate_pool_queries + proposal_surrogate_queries),
+        "cheap_model_queries": int(candidate_pool_queries),
         "surrogate_fit_count": int(len(round_logs)),
         "runtime_seconds": float(time.perf_counter() - start_time),
         "optimum_score": optimum_score,

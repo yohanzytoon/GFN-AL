@@ -1,38 +1,52 @@
 seed: 0
-device: cpu
+device: cpu          # cpu | cuda | mps
 float_precision: 32
 gflownet_root: ../gflownet
 
 env:
-  max_length: 7
-  num_tokens: 27
+  max_length: 7      # maximum word length in tokens (letters)
+  num_tokens: 27     # alphabet size + 1 pad token (26 letters + 0)
 
 oracle:
-  budget: 1000
+  budget: 1000          # total oracle queries; the GFlowNet trains until this is exhausted
   vocabulary_check: true
-  enforce_budget: true
+  enforce_budget: true  # raise when budget is exceeded (stops training automatically)
 
 metrics:
   optimum_score: 45
 
 gflownet:
-  n_train_steps: 250
-  batch_size_forward: 4
-  lr: 0.0001
-  z_dim: 16
-  lr_z_mult: 10.0
-  random_action_prob: 0.08
-  reward_min: 0.0
-  do_clip_rewards: false
-  evaluation_samples: 512
+  # Training budget.
+  # Oracle queries consumed = n_train_steps × batch_size_forward.
+  # Set these so their product ≈ oracle.budget.
+  n_train_steps: 16           # number of gradient steps (16 × 64 ≈ 1000 oracle calls)
+  batch_size_forward: 64      # forward trajectories sampled per training step
+
+  # Optimiser
+  lr: 0.0001                  # learning rate for forward and backward policy networks
+  z_dim: 16                   # dimensionality of the learned logZ (partition function) parameter
+  lr_z_mult: 10.0             # logZ learning rate = lr × lr_z_mult (logZ needs a higher LR)
+
+  # Exploration
+  random_action_prob: 0.08    # probability of taking a uniform-random action instead of policy action
+                               # higher values → more exploration but slower convergence
+
+  # Reward shaping
+  reward_min: 0.0             # floor applied to rewards before training (prevents log(0))
+  do_clip_rewards: false      # whether to clip rewards to [reward_min, ∞)
+
+  # Post-training evaluation
+  evaluation_samples: 512     # states sampled from the trained GFlowNet for quality metrics
+
   policy:
-    hidden_dim: 256
-    n_layers: 3
-    shared_backward: false
+    hidden_dim: 256           # MLP hidden layer width for forward and backward policy networks
+    n_layers: 3               # number of hidden layers
+    shared_backward: false    # if true, backward policy shares weights with forward policy
+
   evaluator:
-    period: 250
-    n: 128
-    checkpoints_period: 250
+    period: 250               # evaluate (compute L1 error, sample quality) every N train steps
+    n: 128                    # number of states sampled during each evaluation
+    checkpoints_period: 250   # save a model checkpoint every N train steps
 
 logging:
   output_dir: outputs

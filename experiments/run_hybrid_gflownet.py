@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -19,7 +18,7 @@ if str(GFLOWNET_ROOT) not in sys.path:
     sys.path.insert(0, str(GFLOWNET_ROOT))
 
 from training.train_hybrid_gfn_only import run_hybrid_gfn_only
-from utils.logging import ExperimentLogger, LoggingConfig
+from utils.logging import ExperimentLogger, LoggingConfig, print_result_summary
 
 
 @hydra.main(config_path="../configs", config_name="hybrid_gfn_only", version_base="1.1")
@@ -38,7 +37,7 @@ def main(cfg):
     logger.dump_summary(result, filename="summary_hybrid_gfn_only.json")
     logger.close()
 
-    print(json.dumps(result, indent=2))
+    print_result_summary(result)
 
 
 if __name__ == "__main__":

@@ -46,8 +46,10 @@ def _build_overrides(
     )
     batch_size_backward_dataset = int(gflownet_cfg.get("batch_size_backward_dataset", 0))
     replay_sampling = str(gflownet_cfg.get("replay_sampling", "permutation"))
+    train_sampling = str(gflownet_cfg.get("train_sampling", "permutation"))
     clip_grad_norm = float(gflownet_cfg.get("clip_grad_norm", 1.0))
     temperature_logits = float(gflownet_cfg.get("temperature_logits", 1.0))
+    train_data_path = gflownet_cfg.get("train_data_path")
 
     overrides = [
         "env=scrabble",
@@ -71,6 +73,7 @@ def _build_overrides(
         f"++gflownet.random_action_prob={float(gflownet_cfg.get('random_action_prob', 0.0))}",
         f"++gflownet.temperature_logits={temperature_logits}",
         f"++gflownet.replay_sampling={replay_sampling}",
+        f"++gflownet.train_sampling={train_sampling}",
         f"++gflownet.optimizer.n_train_steps={int(gflownet_cfg.get('n_train_steps', 2000))}",
         f"++gflownet.optimizer.batch_size.forward={int(gflownet_cfg.get('batch_size_forward', 64))}",
         f"++gflownet.optimizer.batch_size.backward_replay={batch_size_backward_replay}",
@@ -91,9 +94,17 @@ def _build_overrides(
         f"++evaluator.checkpoints_period={int(evaluator_cfg.get('checkpoints_period', 250))}",
         "++evaluator.train_log_period=-1",
         f"++buffer.replay_capacity={replay_capacity}",
-        "++buffer.train.type=null",
         "++buffer.test.type=null",
     ]
+    if train_data_path:
+        overrides.extend(
+            [
+                "++buffer.train.type=pkl",
+                f"++buffer.train.path={Path(str(train_data_path)).resolve()}",
+            ]
+        )
+    else:
+        overrides.append("++buffer.train.type=null")
 
     for key, value in proxy_kwargs.items():
         overrides.append(f"++proxy.{key}={_format_override_value(value)}")

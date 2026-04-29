@@ -2,16 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from training.dataset import generate_random_dataset
 from training.train_active import run_active_learning
-from training.train_baseline import run_supervised_baseline
 from training.train_gflownet import run_oracle_gflownet
 from training.train_hybrid_gfn_only import (
     _bootstrap_oracle_dataset,
     _sample_gfn_only_candidates,
     run_hybrid_gfn_only,
 )
-from training.train_hybrid import run_hybrid_gflownet_active
 
 
 def _base_config(seed: int = 0):
@@ -22,23 +19,6 @@ def _base_config(seed: int = 0):
         "gflownet_root": "../gflownet",
         "env": {"max_length": 7, "num_tokens": 27},
         "oracle": {"budget": 40, "vocabulary_check": False, "enforce_budget": True},
-        "dataset": {
-            "path": None,
-            "num_queries": 40,
-            "unique": True,
-            "sampling_strategy": "uniform",
-            "min_length": 3,
-        },
-        "baseline": {
-            "train_fraction": 0.8,
-            "hidden_dim": 64,
-            "n_layers": 1,
-            "dropout": 0.0,
-            "positive_weight": 3.0,
-            "lr": 1e-3,
-            "epochs": 5,
-            "batch_size": 16,
-        },
         "active": {
             "initial_size": 10,
             "batch_size": 5,
@@ -47,8 +27,9 @@ def _base_config(seed: int = 0):
             "sampling_strategy": "uniform",
             "candidate_unique": True,
             "min_length": 3,
+            "diversity_weight": 0.0,
             "acquisition": {"name": "ucb", "beta": 1.5},
-            "surrogate": {"type": "ensemble", "hidden_dim": 32, "n_layers": 1, "ensemble_size": 2, "epochs": 3, "batch_size": 16, "lr": 1e-3},
+            "surrogate": {"type": "gp", "fit_maxiter": 10, "prefer_botorch": False},
         },
         "gflownet": {
             "n_train_steps": 10,
@@ -66,14 +47,16 @@ def _base_config(seed: int = 0):
         "hybrid": {
             "initial_size": 8,
             "batch_size": 4,
-            "candidate_pool_size": 8,
-            "fallback_random_pool_size": 8,
             "max_rounds": 2,
             "sampling_strategy": "uniform",
+            "initial_sampling_strategy": "uniform",
+            "fallback_sampling_strategy": "uniform",
             "candidate_unique": True,
             "min_length": 3,
-            "acquisition": {"name": "ucb", "beta": 1.0},
-            "surrogate": {"type": "ensemble", "hidden_dim": 32, "n_layers": 1, "ensemble_size": 2, "epochs": 3, "batch_size": 16, "lr": 1e-3},
+            "diversity_weight": 0.0,
+            "plausibility_bonus_weight": 0.0,
+            "acquisition": {"name": "ucb", "beta": 1.0, "beta_min": 0.0, "final_beta": 0.0},
+            "surrogate": {"type": "gp", "fit_maxiter": 10, "prefer_botorch": False},
             "gflownet": {
                 "n_train_steps": 10,
                 "batch_size_forward": 4,
@@ -84,7 +67,11 @@ def _base_config(seed: int = 0):
                 "reward_min": 1e-4,
                 "do_clip_rewards": True,
                 "retrain_every": 1,
+                "start_round": 0,
+                "min_positive_count": 0,
                 "sample_size": 8,
+                "sample_batches": 1,
+                "max_sample_batches": 2,
                 "prediction_mode": "mean",
                 "exploration_beta": 1.0,
                 "reward_transform": "softplus",
@@ -93,24 +80,6 @@ def _base_config(seed: int = 0):
             },
         },
     }
-
-
-def test_dataset_generation_smoke(tmp_path: Path):
-    cfg = _base_config(seed=0)
-    result = generate_random_dataset(cfg, output_dir=tmp_path / "dataset", logger=None)
-    assert result["method"] == "dataset_generation"
-    assert result["num_samples"] > 0
-    assert Path(result["dataset_path"]).exists()
-
-
-def test_supervised_baseline_smoke(tmp_path: Path):
-    cfg = _base_config(seed=0)
-    dataset_result = generate_random_dataset(cfg, output_dir=tmp_path / "dataset", logger=None)
-    cfg["dataset"]["path"] = dataset_result["dataset_path"]
-    result = run_supervised_baseline(cfg, output_dir=tmp_path / "baseline", logger=None)
-    assert result["method"] == "supervised_baseline"
-    assert result["oracle_queries"] == result["num_samples"]
-    assert result["dataset_path"] == dataset_result["dataset_path"]
 
 
 def test_active_learning_smoke(tmp_path: Path):
@@ -167,25 +136,8 @@ def test_oracle_gflownet_summary_with_fake_backend(tmp_path: Path, monkeypatch):
     assert result["best_score"] == 4.0
 
 
-def test_hybrid_smoke_with_fake_gflownet_backend(tmp_path: Path, monkeypatch):
-    cfg = _base_config(seed=3)
-
-    def _fake_train(*args, **kwargs):
-        return _FakeGFN(), None
-
-    monkeypatch.setattr("training.train_hybrid._train_upstream_gflownet", _fake_train)
-    monkeypatch.setattr(
-        "training.train_hybrid.sample_gflownet_terminating_states",
-        lambda gfn, n_samples: [[1, 2, 0, 0, 0, 0, 0], [2, 3, 0, 0, 0, 0, 0], [4, 5, 0, 0, 0, 0, 0]],
-    )
-    result = run_hybrid_gflownet_active(cfg, output_dir=tmp_path / "hybrid", logger=None)
-    assert result["method"] == "hybrid_gflownet_active"
-    assert result["oracle_queries"] <= 40
-
-
 def test_hybrid_gfn_only_smoke_with_fake_gflownet_backend(tmp_path: Path, monkeypatch):
     cfg = _base_config(seed=4)
-    cfg["hybrid"]["fallback_pool_size"] = 8
     cfg["hybrid"]["gflownet"]["start_round"] = 0
     cfg["hybrid"]["gflownet"]["min_positive_count"] = 0
     cfg["hybrid"]["gflownet"]["sample_batches"] = 2

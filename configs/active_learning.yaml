@@ -1,50 +1,54 @@
 seed: 0
-device: cpu
+device: cpu          # cpu | cuda | mps
 gflownet_root: ../gflownet
 
 env:
-  max_length: 7
-  num_tokens: 27
+  max_length: 7      # maximum word length in tokens (letters)
+  num_tokens: 27     # alphabet size + 1 pad token (26 letters + 0)
 
 oracle:
-  budget: 1000
-  vocabulary_check: true
+  budget: 1000                # total oracle queries allowed across the full run
+  vocabulary_check: true      # reject non-dictionary words from oracle scoring
 
 metrics:
-  optimum_score: 45
+  optimum_score: 45           # known optimum; used for regret and early-stop curves
 
 active:
-  initial_size: 96
-  batch_size: 16
-  candidate_pool_size: 8192
-  mutation_pool_size: 4096
-  mutation_top_k: 32
-  mutation_edits: 3
-  local_search_pool_size: 512
-  local_search_beam_width: 32
-  local_search_steps: 5
-  local_search_neighbors_per_step: 128
-  local_search_sampling_strategy: ngram_score
-  local_search_mutation_edits: 1
-  max_rounds: 80
-  sampling_strategy: ngram
-  initial_sampling_strategy: frequency
-  candidate_sampling_strategy: ngram
-  fallback_sampling_strategy: frequency
-  mutation_sampling_strategy: ngram_score
-  candidate_unique: true
-  min_length: 3
-  diversity_weight: 0.4
-  plausibility_bonus_weight: 2.0
+  initial_size: 96            # oracle queries spent on the initial random dataset before AL starts
+  batch_size: 16              # oracle queries per AL round (one acquisition step)
+  candidate_pool_size: 8192   # candidates sampled each round for the surrogate to score
+  max_rounds: 80              # hard cap on AL rounds; stops early if oracle budget is exhausted
+
+  # How letters and lengths are sampled when generating candidate states.
+  # Options: uniform | frequency | frequency_score | ngram | ngram_score
+  #   uniform        – purely random letters and lengths
+  #   frequency      – letters weighted by English frequency, lengths centered at 5
+  #   frequency_score – frequency-weighted + bias toward high-value Scrabble tiles
+  #   ngram          – first-order Markov chain from vocabulary (~8-15x more valid words)
+  #   ngram_score    – bigram chain biased toward high-value tiles (best quality/score trade-off)
+  sampling_strategy: frequency            # default fallback used when a specific strategy is not set
+  initial_sampling_strategy: frequency    # strategy for the initial random dataset
+  candidate_sampling_strategy: frequency  # strategy for the per-round candidate pool
+  fallback_sampling_strategy: frequency   # strategy used when the main pool has too few novel candidates
+
+  candidate_unique: true   # discard candidates already queried (avoids wasting oracle budget)
+  min_length: 3            # minimum word length; shorter words almost never score well
+
+  # diversity_weight controls how much batch selection favours structural variety.
+  # 0.0 = pure UCB (greedy), higher values diversify the batch using Hamming distance.
+  # With a small budget, 0.0 is usually best: exploit the surrogate signal directly.
+  diversity_weight: 0.0
+
   acquisition:
-    name: ucb
-    beta: 2.5
-    beta_min: 0.3
+    name: ucb                # acquisition function: ucb (only option currently)
+    beta: 2.5                # UCB exploration coefficient — higher = more uncertainty-driven exploration
+    beta_min: 0.3            # beta at the final round; linearly decayed from beta → beta_min over rounds
+
   surrogate:
-    type: gp
-    fit_maxiter: 100
-    prefer_botorch: true
-    max_train_points: 750
+    type: gp                 # surrogate model type: gp (Gaussian Process)
+    fit_maxiter: 100         # max optimizer iterations for GP hyperparameter fitting (marginal likelihood)
+    prefer_botorch: true     # use BoTorch exact GP if available; falls back to scikit-learn otherwise
+    max_train_points: 750    # subsample training data when larger than this (GP is O(n³) in memory/time)
 
 logging:
   output_dir: outputs
