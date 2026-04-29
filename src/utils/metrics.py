@@ -1,12 +1,11 @@
-"""Metrics and statistical utilities for active-learning experiments."""
+"""Metrics utilities for active-learning experiments."""
 
 from __future__ import annotations
 
 from collections import Counter
-from typing import Mapping, Sequence
+from typing import Sequence
 
 import numpy as np
-from scipy.stats import ttest_rel, wilcoxon
 
 
 def running_best(scores: Sequence[float]) -> np.ndarray:
@@ -185,46 +184,6 @@ def regression_metrics(y_true: Sequence[float], y_pred: Sequence[float]) -> dict
     return {"rmse": float(np.sqrt(mse)), "mae": float(mae), "r2": float(r2)}
 
 
-def cohen_d_paired(method_a: Sequence[float], method_b: Sequence[float]) -> float:
-    """Cohen's d for paired samples."""
-    a = np.asarray(method_a, dtype=float)
-    b = np.asarray(method_b, dtype=float)
-    if a.shape != b.shape:
-        raise ValueError("Paired effect size requires matching shapes.")
-    diff = a - b
-    std = np.std(diff, ddof=1) if diff.size > 1 else 0.0
-    if std <= 1e-12:
-        return 0.0
-    return float(np.mean(diff) / std)
-
-
-def paired_statistical_tests(
-    method_a: Sequence[float], method_b: Sequence[float]
-) -> dict[str, float]:
-    """Paired t-test, Wilcoxon signed-rank test, and Cohen's d effect size."""
-    a = np.asarray(method_a, dtype=float)
-    b = np.asarray(method_b, dtype=float)
-    if a.shape != b.shape:
-        raise ValueError("Paired tests require matching shapes.")
-
-    t_stat, t_p = ttest_rel(a, b, alternative="two-sided")
-    try:
-        w_stat, w_p = wilcoxon(a, b, zero_method="wilcox", alternative="two-sided")
-    except ValueError:
-        w_stat, w_p = 0.0, 1.0
-    return {
-        "t_stat": float(t_stat),
-        "t_pvalue": float(t_p),
-        "wilcoxon_stat": float(w_stat),
-        "wilcoxon_pvalue": float(w_p),
-        "cohen_d_paired": float(cohen_d_paired(a, b)),
-        "mean_a": float(np.mean(a)),
-        "mean_b": float(np.mean(b)),
-        "mean_diff": float(np.mean(a - b)),
-        "n": int(a.size),
-    }
-
-
 def build_query_curve(
     scores: Sequence[float],
     optimum_score: float | None = None,
@@ -242,35 +201,6 @@ def build_query_curve(
     return curve
 
 
-def aggregate_curves_with_ci(
-    curves: Sequence[dict[str, list[float]]],
-    budget: int,
-    key: str,
-    confidence_z: float = 1.96,
-) -> dict[str, np.ndarray]:
-    """Interpolate and aggregate per-seed curves with normal-approximation CIs."""
-    if len(curves) == 0:
-        zeros = np.zeros(budget, dtype=float)
-        return {"x": np.arange(1, budget + 1), "mean": zeros, "lower": zeros, "upper": zeros}
-
-    interpolated = []
-    x = np.arange(1, budget + 1, dtype=float)
-    for curve in curves:
-        queries = np.asarray(curve.get("queries", []), dtype=float)
-        values = np.asarray(curve.get(key, []), dtype=float)
-        if queries.size == 0 or values.size == 0:
-            interpolated.append(np.zeros_like(x))
-            continue
-        interp = np.interp(x, queries, values, left=values[0], right=values[-1])
-        interpolated.append(interp)
-    matrix = np.stack(interpolated, axis=0)
-    mean = matrix.mean(axis=0)
-    std = matrix.std(axis=0, ddof=1) if matrix.shape[0] > 1 else np.zeros_like(mean)
-    se = std / np.sqrt(max(matrix.shape[0], 1))
-    margin = confidence_z * se
-    return {"x": x, "mean": mean, "lower": mean - margin, "upper": mean + margin}
-
-
 def search_quality_metrics(
     scores: Sequence[float],
     states: Sequence[Sequence[int] | str] | None = None,
@@ -279,7 +209,7 @@ def search_quality_metrics(
     top_k: int = 10,
     pad_value: int | str = 0,
 ) -> dict[str, float | int]:
-    """Compute summary metrics used in publication tables."""
+    """Compute summary metrics used in result tables."""
     values = np.asarray(scores, dtype=float)
     if values.size == 0:
         return {
@@ -340,20 +270,3 @@ def search_quality_metrics(
         metrics["topk_edit_distance"] = 0.0
 
     return metrics
-
-
-def pairwise_method_tests(
-    final_scores: Mapping[str, Sequence[float]], reference_method: str
-) -> dict[str, dict[str, float]]:
-    """Compute pairwise significance tests against a reference method."""
-    if reference_method not in final_scores:
-        raise KeyError(f"Unknown reference method: {reference_method}")
-    reference = final_scores[reference_method]
-    tests: dict[str, dict[str, float]] = {}
-    for method, values in final_scores.items():
-        if method == reference_method:
-            continue
-        tests[f"{reference_method}_vs_{method}"] = paired_statistical_tests(
-            reference, values
-        )
-    return tests
