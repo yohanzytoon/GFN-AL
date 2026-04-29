@@ -1,0 +1,427 @@
+\documentclass[10pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[french]{babel}
+\usepackage[margin=0.85in]{geometry}
+\usepackage{setspace}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, shapes.geometric, positioning, fit, backgrounds}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{mathtools}
+
+\definecolor{bleuIFT}{RGB}{0,82,147}
+\definecolor{vertIFT}{RGB}{0,130,80}
+\definecolor{orangeIFT}{RGB}{210,90,20}
+\definecolor{grisbox}{RGB}{245,245,245}
+
+\setstretch{1.05}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.5em}
+\renewcommand{\arraystretch}{1.15}
+
+\begin{document}
+
+% ─── Titre ────────────────────────────────────────────────────────────────────
+\begin{center}
+    {\Large \textbf{GFlowNets et Apprentissage Actif pour l'Exploration Budgétisée au Scrabble}}\\[0.4em]
+    \textbf{Rapport Final --- IFT 3710 / IFT 6759 --- Hiver 2026}\\[0.2em]
+    {\small Yohan Zytoon \quad Charbel Gebrael \quad Yann-Olivier Jean}
+\end{center}
+
+\hrule
+\vspace{0.5em}
+
+% ─── Résumé ───────────────────────────────────────────────────────────────────
+\section*{Résumé}
+Ce projet étudie l'optimisation combinatoire discrète sous contrainte de budget~: générer des mots Scrabble de longueur maximale~7, interroger un oracle coûteux pour obtenir leur score exact, et découvrir les meilleures séquences valides en minimisant le nombre d'appels réels à l'oracle. Trois méthodes principales sont implémentées et comparées~: un apprentissage actif (AL) avec processus gaussien (GP), un GFlowNet directement connecté à l'oracle, et une méthode hybride combinant GFlowNet entraîné sur une récompense surrogat et sélection par acquisition. Le résultat principal est que le GFlowNet direct est inefficace sous budget strict en raison de la rareté des récompenses, tandis que la méthode hybride améliore la qualité de la frontière découverte au prix d'un coût calcul plus élevé.
+
+% ─── 1. Contexte et problème ─────────────────────────────────────────────────
+\section{Contexte et formulation du problème}
+
+\subsection{Objectif}
+L'objectif est l'optimisation boîte noire budgétisée sur des chaînes de caractères discrètes. Chaque état est une séquence de lettres de longueur au plus~$L_{\max}=7$, encodée avec du rembourrage (\emph{padding}) pour atteindre une longueur fixe. L'oracle renvoie le score Scrabble exact si la séquence est un mot du dictionnaire anglais, et~$0$ sinon. Toutes les méthodes comparées disposent d'un budget de \textbf{1000 requêtes oracles réelles}.
+
+\subsection{Pourquoi le problème est difficile}
+L'espace de recherche est gigantesque~:
+\[
+  \sum_{\ell=3}^{7} 26^\ell \;\approx\; 8{,}35 \times 10^9 \text{ séquences possibles.}
+\]
+La grande majorité de ces séquences ne sont pas des mots valides, ce qui rend la récompense extrêmement \emph{sparse}. En pratique, une exploration naïve produit une longue suite de scores nuls. Ce phénomène est problématique à la fois pour les modèles surrogats et pour les modèles génératifs guidés par la récompense.
+
+\subsection{Espace d'états et action}
+L'environnement est modélisé comme un DAG (\emph{Directed Acyclic Graph})~:
+\begin{itemize}[noitemsep]
+  \item \textbf{État} $s$~: séquence de longueur variable sur un alphabet de 27 tokens (26 lettres + token de fin/padding).
+  \item \textbf{Action}~: ajouter une lettre ou terminer la séquence (\emph{stop}).
+  \item \textbf{État terminal} $x$~: séquence de longueur entre 3 et 7 lettres (token stop atteint).
+  \item \textbf{Récompense} $R(x)$~: score Scrabble si le mot est valide, sinon~$0$.
+\end{itemize}
+
+% ─── 2. Termes et définitions ─────────────────────────────────────────────────
+\section{Définitions des termes clés}
+
+\paragraph{Oracle.}
+Fonction coûteuse à évaluer~: dans ce projet, le score Scrabble exact d'une séquence. Le nombre total d'appels est strictement limité par un budget $B$.
+
+\paragraph{Surrogate (modèle surrogat).}
+Approximation bon marché de l'oracle, entraînée sur les paires (séquence, score oracle) déjà collectées. Le surrogate peut être évalué des millions de fois sans coûter de budget réel.
+
+\paragraph{Acquisition function.}
+Règle de sélection qui utilise le surrogate pour décider quels candidats méritent d'être évalués par l'oracle. L'acquisition doit équilibrer \emph{exploitation} (cibler des candidats à fort score prédit) et \emph{exploration} (cibler des candidats incertains).
+
+\paragraph{GFlowNet (Generative Flow Network).}
+Modèle génératif discret entraîné pour échantillonner des états terminaux avec une probabilité proportionnelle à leur récompense~: $P(x) \propto R(x)^{\beta}$. Contrairement à un algorithme d'optimisation, le GFlowNet apprend toute la distribution sur les états de haute récompense, favorisant naturellement la diversité.
+
+\paragraph{Trajectory Balance (TB).}
+Objectif d'entraînement principal du GFlowNet. Pour une trajectoire complète $\tau = (s_0, s_1, \ldots, s_T=x)$, la perte TB impose~:
+\[
+  \log \frac{Z \cdot \prod_{t} P_F(s_{t+1}|s_t)}{\prod_{t} P_B(s_t|s_{t+1}) \cdot R(x)} = 0,
+\]
+où $Z$ est la constante de partition (partition function), $P_F$ la politique forward, et $P_B$ la politique backward. La perte pratique est le carré du membre gauche, optimisé par descente de gradient.
+
+\paragraph{Politique forward / backward.}
+Deux réseaux MLP~: la politique forward $P_F$ prédit la prochaine action (ajout d'une lettre ou stop), la politique backward $P_B$ modélise la distribution sur les états parents. Tous deux ont une architecture MLP avec 3 couches cachées de dimension 256.
+
+\paragraph{$\log Z$ (log-partition function).}
+Paramètre appris représentant le logarithme de la constante de normalisation $Z = \sum_x R(x)$. Il joue le rôle d'un scalaire global dans la perte TB, et est entraîné avec un taux d'apprentissage $\eta_Z = 10 \times \eta$ pour converger plus vite que les politiques.
+
+\paragraph{Replay buffer.}
+File d'attente circulaire stockant les trajectoires à forte récompense observées lors de l'entraînement. Ces trajectoires sont réechantillonnées en entraînement \emph{off-policy} pour améliorer la couverture des états de haute récompense.
+
+\paragraph{UCB (Upper Confidence Bound).}
+Règle d'acquisition classique~:
+\[
+  \text{UCB}(x) = \mu(x) + \beta \cdot \sigma(x),
+\]
+où $\mu(x)$ est la moyenne prédite par le surrogate, $\sigma(x)$ l'écart-type (incertitude), et $\beta > 0$ un coefficient d'exploration. Un $\beta$ élevé favorise l'exploration, un $\beta$ faible l'exploitation. Dans ce projet, $\beta$ est décru linéairement de $\beta_{\max}$ vers $\beta_{\min}$ au fil des rounds.
+
+\paragraph{Plausibility bonus.}
+Score de vraisemblance linguistique calculé à partir d'un modèle bigramme entraîné sur le vocabulaire~: $\text{plaus}(x) = \exp\!\left(\frac{1}{|x|}\sum_i \log p_{\text{bigram}}(x_i|x_{i-1})\right)$, normalisé dans $[0,1]$. Ce bonus est ajouté à l'acquisition pour pénaliser les séquences peu plausibles linguistiquement.
+
+\paragraph{Bootstrap phase.}
+Phase initiale de la méthode hybride où l'oracle est interrogé heuristiquement (sans GFlowNet) pour collecter suffisamment d'exemples positifs avant d'amorcer l'entraînement du GFlowNet et du surrogate.
+
+% ─── 3. Méthodes ──────────────────────────────────────────────────────────────
+\section{Méthodes implémentées}
+
+\subsection{Apprentissage actif (AL)}
+
+La boucle d'apprentissage actif est décrite en Figure~\ref{fig:al_loop}. Elle part d'un jeu de données initial de taille $N_0 = 96$ requêtes oracles collectées par échantillonnage bigramme (\emph{ngram}), puis itère~:
+
+\begin{enumerate}[noitemsep]
+  \item Entraîner le surrogate GP sur les données étiquetées.
+  \item Échantillonner un pool de candidats de taille 8\,192.
+  \item Scorer les candidats avec UCB (plus bonus de plausibilité optionnel).
+  \item Sélectionner un batch de $B_{\text{round}} = 16$ candidats (sélection diversifiée par Hamming).
+  \item Interroger l'oracle et ajouter les résultats au jeu de données.
+\end{enumerate}
+
+La boucle s'arrête lorsque le budget est épuisé (maximum 80 rounds).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  node distance=1.1cm and 1.6cm,
+  box/.style={rectangle, rounded corners=4pt, draw=bleuIFT, fill=bleuIFT!8, minimum width=3.2cm, minimum height=0.7cm, align=center, font=\small},
+  decision/.style={diamond, draw=orangeIFT, fill=orangeIFT!8, minimum width=2.4cm, minimum height=0.7cm, align=center, font=\small, aspect=2.5},
+  arr/.style={-{Stealth[length=5pt]}, thick, color=bleuIFT},
+]
+  \node[box] (init)   {Dataset initial\\($N_0$ requêtes oracle)};
+  \node[box, below=of init] (gp)    {Entraîner GP\\surrogate};
+  \node[box, below=of gp]   (pool)  {Échantillonner pool\\de candidats};
+  \node[box, below=of pool] (ucb)   {Scorer avec UCB\\+ bonus plausibilité};
+  \node[box, below=of ucb]  (sel)   {Sélection diverse\\(Hamming)};
+  \node[box, below=of sel]  (oracle){Interroger oracle};
+  \node[decision, below=of oracle] (budget) {Budget\\épuisé~?};
+  \node[box, below=of budget] (fin) {Résultats finals};
+
+  \draw[arr] (init)   -- (gp);
+  \draw[arr] (gp)     -- (pool);
+  \draw[arr] (pool)   -- (ucb);
+  \draw[arr] (ucb)    -- (sel);
+  \draw[arr] (sel)    -- (oracle);
+  \draw[arr] (oracle) -- (budget);
+  \draw[arr] (budget) -- node[right, font=\small]{oui} (fin);
+  \draw[arr] (budget.west) -- ++(-1.2,0) |- node[left, font=\small, pos=0.25]{non} (gp.west);
+\end{tikzpicture}
+\caption{Boucle d'apprentissage actif. À chaque round, le GP surrogate est ré-entraîné sur toutes les données étiquetées, puis utilisé pour scorer un pool de candidats via UCB. La sélection diversifiée par distance de Hamming évite de gaspiller le budget sur des candidats quasi-identiques.}
+\label{fig:al_loop}
+\end{figure}
+
+\subsubsection{Surrogate : Processus Gaussien}
+
+Le surrogate est un processus gaussien exact (\emph{BoTorch ExactGP}) avec noyau RBF (Radial Basis Function) et ARD (\emph{Automatic Relevance Determination}), entraîné par maximisation de la vraisemblance marginale (maximum 100 itérations). Quand $|\mathcal{D}| > 750$, un sous-ensemble aléatoire est utilisé (le GP est en $O(n^3)$ en mémoire et en temps).
+
+\paragraph{Représentation d'état (features).}
+Chaque séquence $x$ est encodée par un vecteur de features concaténant~:
+\begin{enumerate}[noitemsep]
+  \item \textbf{One-hot} $\in \{0,1\}^{L_{\max} \times N_{\text{tokens}}}$ = $7 \times 27 = 189$ dimensions.
+  \item \textbf{Score brut normalisé} $\in [0,1]$~: somme des valeurs de tuiles divisée par le maximum observé.
+  \item \textbf{Longueur normalisée} $\in [0,1]$~: longueur réelle divisée par $L_{\max}$.
+  \item \textbf{Features de domaine} (4 dimensions)~:
+    \begin{itemize}[noitemsep]
+      \item \emph{vowel\_ratio}~: fraction de voyelles dans la séquence.
+      \item \emph{ngram\_plausibility}~: log-probabilité bigramme normalisée.
+      \item \emph{max\_consonant\_run}~: longueur maximale d'une suite de consonnes consécutives.
+      \item \emph{has\_vowel}~: indicateur binaire (la séquence contient au moins une voyelle).
+    \end{itemize}
+\end{enumerate}
+Le vecteur total a donc $189 + 1 + 1 + 4 = 195$ dimensions.
+
+\subsubsection{Sélection diversifiée par distance de Hamming}
+
+Au lieu de sélectionner naïvement les $k$ meilleurs scores UCB, la sélection utilise une procédure gloutonne~: à chaque étape, on ajoute le candidat qui maximise $\text{UCB}(x) - \lambda \cdot d_H(x, \mathcal{S})$, où $d_H(x, \mathcal{S})$ est la distance de Hamming minimale entre $x$ et les candidats déjà sélectionnés $\mathcal{S}$, et $\lambda > 0$ est le poids de diversité (\texttt{diversity\_weight}). Avec $\lambda = 0$, on obtient la sélection pure UCB.
+
+\subsubsection{Stratégies d'échantillonnage des candidats}
+
+\begin{itemize}[noitemsep]
+  \item \textbf{uniform}~: lettres et longueurs tirées uniformément.
+  \item \textbf{frequency}~: lettres pondérées par leur fréquence en anglais.
+  \item \textbf{ngram}~: chaîne de Markov du premier ordre sur le vocabulaire anglais ($\approx$ 8–15x plus de mots valides que l'uniforme).
+  \item \textbf{ngram\_score}~: bigramme biaisé vers les tuiles de haute valeur Scrabble.
+\end{itemize}
+
+\subsection{GFlowNet direct (oracle)}
+
+Le GFlowNet direct reçoit la récompense de l'oracle réel à travers un proxy qui décompte le budget. Il utilise l'implémentation \emph{upstream} (\texttt{alexhernandezgarcia/gflownet}) avec~:
+\begin{itemize}[noitemsep]
+  \item perte Trajectory Balance,
+  \item politiques forward/backward MLP (256 dim, 3 couches),
+  \item $n_{\text{steps}} = 16$ steps $\times$ $B_F = 64$ trajectoires $= 1024 \approx 1000$ appels oracle.
+\end{itemize}
+
+Le GFlowNet n'a \emph{aucun} mécanisme d'acquisition actif~: toutes les requêtes sont utilisées directement pour l'entraînement.
+
+\subsection{Méthode hybride}
+
+La méthode hybride est la contribution principale du projet. Elle combine un GFlowNet entraîné sur une récompense surrogat bon marché avec une sélection active pour décider quels candidats méritent une vraie requête oracle. Le pipeline est illustré en Figure~\ref{fig:hybrid_arch}.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  node distance=0.9cm and 1.8cm,
+  box/.style={rectangle, rounded corners=4pt, draw=bleuIFT, fill=bleuIFT!8, minimum width=3.5cm, minimum height=0.65cm, align=center, font=\small},
+  gfnbox/.style={rectangle, rounded corners=4pt, draw=vertIFT, fill=vertIFT!10, minimum width=3.5cm, minimum height=0.65cm, align=center, font=\small},
+  oracbox/.style={rectangle, rounded corners=4pt, draw=orangeIFT, fill=orangeIFT!8, minimum width=3.5cm, minimum height=0.65cm, align=center, font=\small},
+  arr/.style={-{Stealth[length=5pt]}, thick, color=bleuIFT},
+  garr/.style={-{Stealth[length=5pt]}, thick, color=vertIFT},
+  oarr/.style={-{Stealth[length=5pt]}, thick, color=orangeIFT},
+]
+  \node[oracbox] (init) {Dataset initial\\(ngram, $N_0=192$ requêtes)};
+  \node[box, below=of init] (boot) {Phase bootstrap\\(appels oracle heuristiques)};
+  \node[box, below=of boot] (gp2) {Entraîner GP surrogate};
+  \node[gfnbox, below=of gp2] (gfntrain) {Entraîner GFlowNet\\sur récompense surrogat};
+  \node[gfnbox, below=of gfntrain] (sample) {Échantillonner candidats\\(GFlowNet)};
+  \node[box, below=of sample] (plaus) {Filtrer par plausibilité\\bigramme};
+  \node[box, below=of plaus] (acq) {UCB + bonus plausibilité};
+  \node[oracbox, below=of acq] (oracle2) {Interroger oracle\\($B_{\text{round}}=8$)};
+  \node[box, below=0.6cm of oracle2] (retrain) {Retrain GFlowNet\\tous les $N=6$ rounds};
+
+  \draw[oarr] (init) -- (boot);
+  \draw[arr] (boot) -- (gp2);
+  \draw[arr] (gp2) -- (gfntrain);
+  \draw[garr] (gfntrain) -- (sample);
+  \draw[garr] (sample) -- (plaus);
+  \draw[arr] (plaus) -- (acq);
+  \draw[arr] (acq) -- (oracle2);
+  \draw[arr] (oracle2.east) -- ++(1.2,0) |- (gp2.east);
+  \draw[arr] (oracle2) -- (retrain);
+  \draw[arr] (retrain.west) -- ++(-1.4,0) |- (gfntrain.west);
+\end{tikzpicture}
+\caption{Architecture de la méthode hybride. Le GFlowNet est entraîné sur une récompense surrogat bon marché (GP) au lieu de l'oracle réel. Seule la sélection finale d'acquisition consomme le budget oracle. Le GFlowNet est ré-entraîné tous les 6 rounds avec warm start.}
+\label{fig:hybrid_arch}
+\end{figure}
+
+\subsubsection{Phase bootstrap}
+
+Avant le round~0, une boucle heuristique collecte des exemples positifs sans utiliser le GFlowNet~: environ 35\,\% du budget post-initial est dépensé ici. La phase s'arrête quand au moins 6 exemples positifs ont été collectés. Cette phase est essentielle pour que le GP surrogate ait une surface de récompense non-triviale avant d'entraîner le GFlowNet.
+
+\subsubsection{Transformation de récompense (exp\_beta)}
+
+Le GFlowNet ne reçoit pas directement les scores surrogats~: ceux-ci sont transformés par~:
+\[
+  R_{\text{GFN}}(x) = \exp\!\left(\beta_s \cdot \frac{\mu(x)}{s_{\max}}\right),
+\]
+où $\beta_s = 5$ est un paramètre de température et $s_{\max}$ est un score maximal adaptatif (quantile 90\,\% des scores positifs observés, avec plancher à~10). Cette transformation Boltzmann concentre l'entraînement sur les états de haute récompense tout en maintenant un gradient utile sur les états moyens.
+
+\subsubsection{Filtre de plausibilité}
+
+Les candidats générés par le GFlowNet dont la plausibilité bigramme est inférieure à un seuil $\theta = 0.5$ sont rejetés avant l'acquisition. Cela évite de gaspiller des requêtes oracle sur des séquences évidemment invalides (suites de consonnes, etc.).
+
+\subsubsection{Planification du ré-entraînement}
+
+Le GFlowNet est ré-entraîné tous les $N_r = 6$ rounds AL, uniquement si au moins 6 exemples positifs sont disponibles. Chaque ré-entraînement effectue 1000 steps de gradient avec~:
+\begin{itemize}[noitemsep]
+  \item 64 trajectoires forward par step,
+  \item 32 trajectoires backward par replay buffer,
+  \item 32 trajectoires backward par dataset oracle,
+  \item warm start à partir des poids du round précédent.
+\end{itemize}
+
+Le warm start (\texttt{warm\_start: true}) évite de repartir de zéro à chaque ré-entraînement, réduisant significativement le coût de calcul.
+
+\subsubsection{Mode de récompense plausibilité}
+
+Dans la récompense surrogat du GFlowNet, la plausibilité est appliquée en mode \emph{multiplicatif}~: $R_{\text{GFN}}(x) \leftarrow R_{\text{GFN}}(x) \times \text{plaus}(x)$. Les séquences non-plausibles reçoivent une récompense proche de zéro, forçant le GFlowNet à apprendre la structure linguistique de manière implicite.
+
+% ─── 4. Résultats ─────────────────────────────────────────────────────────────
+\section{Résultats}
+
+Les trois méthodes retenues pour la comparaison sont~: l'apprentissage actif (AL), le GFlowNet direct (GFN), et la méthode hybride. La baseline supervisée et l'ancien hybride complet ont été exclus de la comparaison~: leurs résultats ne sont pas directement comparables aux méthodes GFlowNet (voir Section~\ref{sec:failed}). Toutes les méthodes disposent d'exactement \textbf{1000 requêtes oracles réelles}.
+
+Deux runs sont présentés~: un meilleur run sur 5 seeds (\S\ref{ssec:bestrun}) qui illustre le potentiel des méthodes dans des conditions favorables, et un run reproductible sur 1 seed (\S\ref{ssec:reprodrun}) représentatif des performances typiques observées de manière régulière.
+
+\subsection{Meilleur run}
+\label{ssec:bestrun}
+
+Le Tableau~\ref{tab:best} présente les résultats du meilleur run archivé. Ces résultats représentent le potentiel maximal des méthodes dans des conditions de tuning favorables, mais ne sont pas systématiquement reproductibles.
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\linewidth}{!}{
+\begin{tabular}{lcccccc}
+\toprule
+Méthode & Meilleur score & Top-10 moyen & Score moyen & Mots valides (\%) & $Q_{90}$ \\
+\midrule
+Apprentissage actif   & 14{,}4  & 13{,}10 & 1{,}075 & 12{,}9  & 297{,}0   \\
+GFlowNet direct       & 12{,}6  & 9{,}36  & 0{,}269 & 6{,}3   & 377{,}0  \\
+Hybride & 14{,}2  & 13{,}20 & 1{,}216 & 14{,}6  & 148{,}2   \\
+\bottomrule
+\end{tabular}
+}
+\label{tab:best}
+\end{table}
+
+Dans ce run favorable, l'hybride domine sur les métriques de frontière~: meilleur top-10 (13,20), meilleur score moyen (1,216), meilleure validité (14,6\,\%), et meilleur $Q_{90}$ (148). L'AL reste compétitif et beaucoup moins coûteux en calcul, tandis que le GFN direct est la méthode la plus faible sur tous les axes.
+
+\subsection{Run reproductible}
+\label{ssec:reprodrun}
+
+Le Tableau~\ref{tab:reprod} présente un run reproductible typique. Ce run est représentatif des performances que l'on peut attendre de manière régulière.
+
+\begin{table}[h]
+\centering
+\small
+\resizebox{\linewidth}{!}{
+\begin{tabular}{lccccccc}
+\toprule
+Méthode & Meilleur score & Top-10 moyen & Score moyen & Mots valides (\%) & $Q_{90}$ \\
+\midrule
+Apprentissage actif   & 10   & 9{,}1  & 1{,}208 & 24{,}7 & 105 \\
+GFlowNet direct       & 14   & 9{,}6  & 0{,}298 & 6{,}7  & 345 \\
+Hybride & 15   & 9{,}3  & 0{,}16  & 2{,}2  & 190 \\
+\bottomrule
+\end{tabular}
+}
+\label{tab:reprod}
+\end{table}
+
+\subsection{Analyse des résultats}
+
+\paragraph{Apprentissage actif~: méthode la plus robuste.}
+L'AL présente un profil très différent selon le run. Dans le meilleur run (5 seeds), il atteint un top-10 moyen de 13,10 et une validité de 12,9\,\%. Dans le run reproductible, sa validité grimpe à 24,7\,\% et son score moyen à 1,208 — les meilleures valeurs de frontière de toutes les méthodes. Son $Q_{90}=105$ signifie qu'il atteint 90\,\% de son meilleur score en seulement 105 requêtes. L'AL est également de loin le plus rapide (36 secondes), ce qui en fait la méthode la plus fiable et la plus praticable.
+
+\paragraph{GFlowNet direct~: bon pic, mauvaise frontière.}
+Le GFN produit de bons scores individuels (12,6--14 selon le run) mais une frontière faible~: score moyen 0,269--0,298 et validité 6,3--6,7\,\%. Il est capable de trouver de bonnes séquences ponctuellement mais ne construit pas un ensemble dense de mots valides. La raison fondamentale est la rareté de la récompense~: avec 1000 requêtes, le GFN n'a pas assez de signal pour apprendre une politique généralisable à l'ensemble du vocabulaire.
+
+\paragraph{Hybride~: résultats très variables.}
+
+L'hybride présente la plus grande variance entre les deux runs. Dans le meilleur run, il domine toutes les méthodes sur les métriques de frontière (validité 14,6\,\%, score moyen 1,216). Dans le run reproductible, sa frontière s'effondre~: validité 2,2\,\%, score moyen 0,16, malgré le meilleur score individuel (15). Ce paradoxe révèle l'instabilité fondamentale du pipeline~: le GFlowNet guidé par surrogate peut concentrer son exploration sur quelques zones prometteuses (donnant un bon pic), ou se piéger dans une région sous-optimale (donnant une mauvaise frontière).
+
+\paragraph{Tension exploitation / exploration.}
+Les deux runs illustrent une tension fondamentale~:
+\begin{itemize}[noitemsep]
+  \item \textbf{Trouver le meilleur mot unique} (best score)~: l'hybride et le GFN tirent leur épingle du jeu grâce à leur exploration concentrée.
+  \item \textbf{Maintenir une bonne frontière} (score moyen, validité)~: l'AL est systématiquement supérieur grâce à sa diversification active et à sa sélection guidée par l'incertitude.
+\end{itemize}
+Le choix de la méthode dépend donc de l'objectif~: découverte de l'optimum ponctuel vs exploration dense d'un espace de candidats de qualité.
+
+\paragraph{Ce qu'il faut retenir.}
+Sur les métriques stables (score moyen, validité, $Q_{90}$), l'AL est la méthode la plus robuste. L'hybride peut surpasser l'AL dans un run sur cinq, mais cette supériorité n'est pas reproductible de manière fiable. Le GFN direct est systématiquement le plus faible sur la frontière dans les deux runs.
+
+% ─── 5. Ce qui n'a pas fonctionné ─────────────────────────────────────────────
+\section{Ce qui n'a pas fonctionné}
+\label{sec:failed}
+
+\subsection{Baseline supervisée et hybride complet~: absents de la comparaison}
+
+Deux méthodes ont été développées et archivées mais exclues de la comparaison principale~: la baseline supervisée et l'hybride complet.
+
+\paragraph{Baseline supervisée (archivée).}
+La première approche était un MLP supervisé avec deux têtes (validité et score), entraîné sur un dataset aléatoire. Son problème fondamental est conceptuel~: \textbf{elle n'est pas un bon baseline de comparaison pour les méthodes GFlowNet}. Le MLP ne modélise pas d'incertitude, ne fait pas de sélection active, et son mécanisme de décision est radicalement différent. Comparer ses résultats bruts à ceux d'un GFN ou d'un AL reviendrait à mélanger des philosophies incompatibles.
+
+\paragraph{Hybride complet (archivé).}
+L'ancien hybride combinait le GFlowNet avec plusieurs composantes additionnelles. Il produisait des résultats numériques parfois intéressants, mais \textbf{il ne constitue pas une comparaison valide face au GFlowNet seul}~: son pipeline de sélection est beaucoup plus élaboré et ses résultats dépendent fortement de composantes non-GFlowNet. Il est donc impossible d'isoler la contribution réelle du GFlowNet dans ses performances. Pour cette raison, seule la méthode hybride est conservée dans la comparaison.
+
+\subsection{Deep ensembles comme surrogate}
+
+En parallèle du GP, un surrogate par \emph{deep ensemble} a été implémenté~: un ensemble de réseaux MLP entraînés indépendamment, dont la moyenne et la variance empirique fournissent une estimation d'incertitude. Cette approche était attrayante car elle passe à l'échelle mieux que le GP (pas de $O(n^3)$) et peut capturer des non-linéarités plus complexes.
+
+En pratique, le deep ensemble s'est révélé moins utile que le GP dans notre contexte. Avec un petit budget d'oracle (quelques centaines de points étiquetés au début des rounds), les ensembles ont tendance à sous-estimer l'incertitude épistémique sur les régions peu explorées. Le GP, avec son prior cohérent et sa marginalisation bayésienne exacte, fournit une incertitude mieux calibrée sur les petits datasets — ce qui est critique pour UCB. Le deep ensemble a donc été conservé dans le code mais n'est pas utilisé dans les expériences principales.
+
+\subsection{Expected Improvement et Thompson Sampling comme acquisition}
+
+Trois fonctions d'acquisition ont été implémentées et testées~: UCB, Expected Improvement (EI), et Thompson Sampling (TS).
+
+\paragraph{Expected Improvement (EI).}
+L'EI sélectionne les candidats qui maximisent l'amélioration espérée par rapport au meilleur score actuel~: $\text{EI}(x) = \mathbb{E}[\max(0, f(x) - f^*)]$. Dans notre domaine avec récompense sparse, l'EI souffre d'un biais d'exploitation prononcé~: il cible des candidats proches du meilleur mot connu, ce qui converge rapidement vers un voisinage étroit sans explorer le reste de l'espace. Avec un budget de 1000 requêtes et une récompense binaire (valide / invalide), l'exploitation précoce est coûteuse — d'où les mauvaises performances observées.
+
+\paragraph{Thompson Sampling (TS).}
+Le TS échantillonne une fonction de récompense à partir de la distribution postérieure du GP, puis sélectionne le maximum de cette fonction. En théorie, il offre un bon équilibre exploration/exploitation. En pratique, sur notre espace discret de grande dimension (195 features), les tirages du GP postérieur produisent des paysages bruités dont les maxima se situent fréquemment sur des séquences non-plausibles. Sans filtre de plausibilité efficace, le TS dépense une grande fraction du budget sur des candidats invalides.
+
+UCB avec décroissance linéaire de $\beta$ est resté la meilleure option~: il est simple, interprétable, et son paramètre $\beta$ offre un contrôle direct sur la balance exploration/exploitation au fil des rounds.
+
+\subsection{Exploration naïve sans structure linguistique}
+
+L'échec répété de l'exploration uniforme ou purement incertitude-guidée montre une leçon clé~: dans ce domaine, l'incertitude est facile à maximiser sur des séquences absurdes (longues suites de consonnes, séquences aléatoires) qui retournent systématiquement un score~0. Sans structure linguistique dans l'échantillonnage et l'acquisition, une grande fraction du budget est gaspillée sur des candidats évidemment invalides. C'est pourquoi~:
+\begin{itemize}[noitemsep]
+  \item l'échantillonnage bigramme est utilisé systématiquement,
+  \item le bonus de plausibilité est appliqué dans l'acquisition,
+  \item les features de domaine (vowel\_ratio, consonant\_run, etc.) sont incluses dans le surrogate.
+\end{itemize}
+
+% ─── 6. Conclusion ────────────────────────────────────────────────────────────
+\section{Conclusion}
+
+Ce projet a construit et comparé une pile complète de méthodes pour l'exploration budgétisée au Scrabble, et a identifié clairement les forces et faiblesses de chaque approche sous contrainte de budget strict.
+
+\textbf{Résultat clé de l'apprentissage actif~:} l'AL est la méthode la plus robuste et la plus reproductible. Avec un taux de validité de 24,7\,\%, un score moyen de 1,208, et un $Q_{90}=105$ dans le run typique, il exploite efficacement le budget oracle limité. Sa simplicité et son faible coût de calcul (36 secondes) en font une baseline difficile à battre de manière régulière.
+
+\textbf{Résultat clé du GFlowNet direct~:} le GFN peut atteindre de bons scores individuels mais échoue à construire une frontière dense. Sous 1000 requêtes, la rareté de la récompense ne lui laisse pas assez de signal pour apprendre une politique généralisable.
+
+\textbf{Résultat clé de la méthode hybride~:} l'hybride est la méthode la plus instable. Dans un run favorable (meilleur run sur 5 seeds), il surpasse l'AL sur toutes les métriques de frontière. Dans un run typique, sa frontière s'effondre tout en atteignant le meilleur score individuel. Cette instabilité est une limite fondamentale~: le pipeline dépend fortement de la qualité du surrogate au moment où le GFlowNet est activé.
+
+\textbf{Note sur l'évolution des conclusions~:} dans une version antérieure de ce rapport (Devoir 5), la conclusion affirmait que la méthode hybride était la meilleure approche, basée sur un run particulièrement favorable. Cette conclusion s'est avérée fragile~: elle ne tient pas à travers les runs répétés. La leçon principale est qu'une conclusion sur une méthode stochastique ne peut pas reposer sur un seul run, même bon. La vraie conclusion est donc plus nuancée~: \textbf{il n'y a pas de méthode dominante sur tous les axes et dans toutes les conditions}. L'AL est la méthode la plus fiable ; l'hybride peut la surpasser ponctuellement mais pas de manière systématique.
+
+% ─── 7. Travaux futurs ────────────────────────────────────────────────────────
+\section{Travaux futurs}
+
+\subsection{Améliorer la qualité et la calibration du surrogate}
+L'hybride entier dépend de la qualité du GP surrogate. Un surrogate mieux calibré (meilleure incertitude, meilleure qualité de ranking) améliorerait à la fois l'AL et l'hybride. Une piste serait d'utiliser des GPs induisant (sparse GPs) pour éviter le sous-échantillonnage sur de grands datasets.
+
+\subsection{Réduire le coût de calcul de l'hybride}
+La faiblesse pratique principale de l'hybride est son coût de calcul (4389 secondes vs 36 pour AL, soit $\sim$120$\times$ plus lent). Des pistes~: ré-entraînement GFlowNet moins fréquent, mises à jour incrémentales (fine-tuning) plutôt que ré-entraînement complet, politique GFlowNet plus légère.
+
+\subsection{Renforcer la phase d'exploitation finale}
+L'hybride améliore parfois le score individuel mais pas toujours la frontière. Une phase d'exploitation finale plus forte (rescorer d'exploitation pur en fin de run) pourrait stabiliser les gains sans sacrifier la couverture.
+
+\subsection{Objectifs GFlowNet conscients de l'acquisition}
+L'extension naturelle est de rendre le GFlowNet mieux aligné avec l'utilité d'apprentissage actif. Un proxy qui combine directement récompense prédite, incertitude, et diversité permettrait au GFlowNet de générer des candidats qui maximisent l'utilité d'acquisition, plutôt que de laisser l'acquisition corriger le décalage a posteriori.
+
+\subsection{Plus de seeds et ablations élargies}
+Les comparaisons principales utilisent 5 seeds au mieux, ce qui est insuffisant pour des tests non-paramétriques forts. Un minimum de 20 seeds serait nécessaire pour des affirmations scientifiques robustes. Le dépôt contient déjà des scripts d'ablation qui pourraient être systématisés.
+
+\subsection{Améliorer la modélisation de la validité}
+Même les meilleures méthodes budget-matched n'atteignent que $\sim$15--25\,\% de mots valides. Une génération conditionnée sur le dictionnaire (modèle de langage contrôlé, trie de mots valides) convertit beaucoup plus du budget fixe en labels utiles.
+
+\end{document}

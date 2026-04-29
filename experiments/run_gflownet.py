@@ -1,8 +1,7 @@
-"""Run supervised baseline experiment."""
+"""Run oracle-access GFlowNet experiment."""
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -18,11 +17,11 @@ if str(SRC_ROOT) not in sys.path:
 if str(GFLOWNET_ROOT) not in sys.path:
     sys.path.insert(0, str(GFLOWNET_ROOT))
 
-from training.train_baseline import run_supervised_baseline
-from utils.logging import ExperimentLogger, LoggingConfig
+from training.train_gflownet import run_oracle_gflownet
+from utils.logging import ExperimentLogger, LoggingConfig, print_result_summary
 
 
-@hydra.main(config_path="../configs", config_name="baseline", version_base="1.1")
+@hydra.main(config_path="../configs", config_name="gflownet", version_base="1.1")
 def main(cfg):
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
     run_dir = Path(HydraConfig.get().runtime.output_dir)
@@ -30,15 +29,15 @@ def main(cfg):
     logger = ExperimentLogger(
         LoggingConfig(
             output_dir=run_dir,
-            run_name=f"baseline_seed_{cfg_dict['seed']}",
+            run_name=f"gflownet_seed_{cfg_dict['seed']}",
         )
     )
-    result = run_supervised_baseline(cfg_dict, output_dir=run_dir, logger=logger)
-    logger.dump_metrics("metrics_baseline.csv")
-    logger.dump_summary(result, filename="summary_baseline.json")
+    result = run_oracle_gflownet(cfg_dict, output_dir=run_dir, logger=logger)
+    logger.dump_metrics("metrics_gflownet.csv")
+    logger.dump_summary(result, filename="summary_gflownet.json")
     logger.close()
 
-    print(json.dumps(result, indent=2))
+    print_result_summary(result)
 
 
 if __name__ == "__main__":

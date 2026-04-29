@@ -34,6 +34,7 @@ class ExperimentLogger:
 
         self._logger = pylogging.getLogger(config.run_name)
         self._logger.setLevel(pylogging.INFO)
+        self._logger.propagate = False
         self._logger.handlers.clear()
         file_handler = pylogging.FileHandler(self.output_dir / "run.log")
         file_handler.setFormatter(
@@ -62,7 +63,11 @@ class ExperimentLogger:
             path.write_text("", encoding="utf-8")
             return path
 
-        fieldnames = list(self._records[0].keys())
+        fieldnames: list[str] = []
+        for record in self._records:
+            for key in record.keys():
+                if key not in fieldnames:
+                    fieldnames.append(key)
         with path.open("w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
@@ -77,8 +82,24 @@ class ExperimentLogger:
         return path
 
     def close(self) -> None:
-        """Finalize logger resources."""
-        return None
+        for handler in self._logger.handlers[:]:
+            handler.flush()
+            handler.close()
+            self._logger.removeHandler(handler)
+
+
+_BULKY_RESULT_KEYS = frozenset({
+    "scores", "round_logs", "curve", "sampled_states", "sampled_scores",
+    "bootstrap_logs", "optimum_words", "gflownet_round_dirs",
+    "surrogate_path", "checkpoint_dir",
+})
+
+
+def print_result_summary(result: dict[str, Any]) -> None:
+    """Print a concise terminal summary, omitting large arrays and logs."""
+    slim = {k: v for k, v in result.items() if k not in _BULKY_RESULT_KEYS}
+    import json as _json
+    print(_json.dumps(slim, indent=2))
 
 
 def set_global_seed(seed: int) -> None:

@@ -1,24 +1,20 @@
-# Python
+extras/
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 *.egg-info/
-.pytest_cache/
-.mypy_cache/
-
-# Environments
 .venv/
 venv/
-
-# Experiment outputs
 outputs/
 logs/
-wandb/
-
-# OS files
+*.log
+reports/
+.hydra/
+multirun/
+*.pt
+*.pth
+*.npz
+*.pkl
+*.npy
+.pytest_cache/
+.mypy_cache/
 .DS_Store
-
-# Local notes / writeups
-DEVOIR4_METHODES_PRELIMINAIRES.tex
-CODEBASE_EXPLANATION.tex

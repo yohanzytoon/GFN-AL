@@ -1,8 +1,7 @@
-"""Generate a saved random dataset for the preliminary milestone."""
+"""Run hybrid experiment."""
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -18,11 +17,11 @@ if str(SRC_ROOT) not in sys.path:
 if str(GFLOWNET_ROOT) not in sys.path:
     sys.path.insert(0, str(GFLOWNET_ROOT))
 
-from training.dataset import generate_random_dataset
-from utils.logging import ExperimentLogger, LoggingConfig
+from training.train_hybrid import run_hybrid
+from utils.logging import ExperimentLogger, LoggingConfig, print_result_summary
 
 
-@hydra.main(config_path="../configs", config_name="dataset", version_base="1.1")
+@hydra.main(config_path="../configs", config_name="hybrid", version_base="1.1")
 def main(cfg):
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
     run_dir = Path(HydraConfig.get().runtime.output_dir)
@@ -30,15 +29,15 @@ def main(cfg):
     logger = ExperimentLogger(
         LoggingConfig(
             output_dir=run_dir,
-            run_name=f"dataset_seed_{cfg_dict['seed']}",
+            run_name=f"hybrid_seed_{cfg_dict['seed']}",
         )
     )
-    result = generate_random_dataset(cfg_dict, output_dir=run_dir, logger=logger)
-    logger.dump_metrics("metrics_dataset.csv")
-    logger.dump_summary(result, filename="summary_dataset.json")
+    result = run_hybrid(cfg_dict, output_dir=run_dir, logger=logger)
+    logger.dump_metrics("metrics_hybrid.csv")
+    logger.dump_summary(result, filename="summary_hybrid.json")
     logger.close()
 
-    print(json.dumps(result, indent=2))
+    print_result_summary(result)
 
 
 if __name__ == "__main__":
