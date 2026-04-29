@@ -47,14 +47,13 @@ class ExperimentLogger:
         self._logger.info(message)
 
     def log_metrics(self, step: int, metrics: dict[str, Any]) -> None:
-        """Log metrics for a given step."""
+        """Record metrics for a given step (stored in memory for CSV export, not logged to file)."""
         payload = {
             "timestamp": datetime.utcnow().isoformat(),
             "step": int(step),
             **metrics,
         }
         self._records.append(payload)
-        self._logger.info("step=%s metrics=%s", step, metrics)
 
     def dump_metrics(self, filename: str = "metrics.csv") -> Path:
         """Persist tabular metrics to disk."""
