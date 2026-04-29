@@ -52,13 +52,8 @@ All commands use `.venv/bin/python` by default. Override with `PYTHON=<path> mak
 |---|---|
 | `make install` | Install pip deps, this package, and `../gflownet` in editable mode |
 | `make test` | Run the test suite (`pytest -q`) |
-| `make dataset` | Generate a dataset via `run_dataset.py` |
-| `make baseline` | Train the supervised baseline via `run_baseline.py` |
 | `make active` | Run the active learning loop via `run_active.py` |
 | `make gflownet` | Run the GFlowNet experiment via `run_gflownet.py` |
 | `make hybrid` | Run the hybrid experiment via `run_hybrid.py` |
-| `make comparisons` | Run all method comparisons via `run_comparisons.py` |
-| `make ablations` | Run ablation studies via `extras/run_ablations.py` |
-| `make quick-compare` | Run a quick comparison via `scripts/run_compare.sh quick` |
-| `make full-compare` | Run the full comparison suite via `scripts/run_compare.sh full` |
+
 
