@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import pickle
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -332,7 +333,7 @@ def run_hybrid(
         oracle_budget=oracle_budget,
         enforce_budget=bool(oracle_cfg.get("enforce_budget", True)),
         vocabulary_check=bool(oracle_cfg.get("vocabulary_check", False)),
-        stats_output_path=str(output_dir / "oracle_stats.json"),
+        stats_output_path=None,
     )
     oracle.setup(env)
 
@@ -577,7 +578,7 @@ def run_hybrid(
                     "min_length": int(min_length),
                     "gflownet_root": gflownet_root,
                     "plausibility_weight": float(plausibility_bonus_weight),
-                    "stats_output_path": str(round_gflownet_dir / "surrogate_stats.json"),
+                    "stats_output_path": None,
                 },
                 warm_start_from=previous_gfn,
             )
@@ -585,6 +586,9 @@ def run_hybrid(
             gflownet_total_train_steps += gflownet_steps_per_refresh
             fake_oracle_queries += int(getattr(getattr(gfn, "proxy", None), "call_count", 0))
             last_gflownet_stop_reason = stop_reason
+            shutil.rmtree(round_gflownet_dir, ignore_errors=True)
+            if surrogate_path.exists():
+                surrogate_path.unlink()
 
         # Candidate generation: GFlowNet.
         sampled_candidates, candidate_breakdown = _sample_hybrid_candidates(
@@ -742,7 +746,7 @@ def run_hybrid(
                     "min_length": int(min_length),
                     "gflownet_root": gflownet_root,
                     "plausibility_weight": float(plausibility_bonus_weight),
-                    "stats_output_path": str(final_gflownet_dir / "surrogate_stats.json"),
+                    "stats_output_path": None,
                 },
                 warm_start_from=previous_gfn,
             )
@@ -750,6 +754,8 @@ def run_hybrid(
             gflownet_total_train_steps += gflownet_steps_per_refresh
             fake_oracle_queries += int(getattr(getattr(gfn, "proxy", None), "call_count", 0))
             last_gflownet_stop_reason = stop_reason
+            shutil.rmtree(final_gflownet_dir, ignore_errors=True)
+            final_surrogate_path.unlink(missing_ok=True)
 
         final_gflownet_sample_size = int(
             gflownet_schedule_cfg.get(
