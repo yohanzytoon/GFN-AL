@@ -23,11 +23,7 @@ If you prefer a different location, set `gflownet_root` in your Hydra config to 
 
 The gflownet repo requires **Python 3.10** and PyTorch 2.5.1.
 
-Then install the package in editable mode (the `make install` and setup steps below do this automatically):
 
-```bash
-python -m pip install -e ../gflownet
-```
 
 ## Setup
 

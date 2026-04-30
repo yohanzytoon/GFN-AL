@@ -28,7 +28,7 @@ from training.common import (
     filter_new_states,
     query_oracle_scores,
 )
-from training.dataset import (
+from training.sampling import (
     deduplicate_state_scores,
     sample_terminating_states,
 )
