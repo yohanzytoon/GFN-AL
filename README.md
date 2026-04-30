@@ -10,6 +10,34 @@ The Scrabble environment and scorer come from the upstream GFlowNet repository.
 This repo expects that checkout at `../gflownet`, or an explicit
 `gflownet_root` override in the Hydra config.
 
+## Upstream GFlowNet dependency
+
+This project depends on [alexhernandezgarcia/gflownet](https://github.com/alexhernandezgarcia/gflownet) for the Scrabble environment and scorer.
+Clone it **as a sibling directory** so it lives at `../gflownet` relative to this repo:
+
+```bash
+git clone https://github.com/alexhernandezgarcia/gflownet.git ../gflownet
+```
+
+If you prefer a different location, set `gflownet_root` in your Hydra config to point at it.
+
+The gflownet repo requires **Python 3.10** and PyTorch 2.5.1.
+Install PyTorch before running the setup below:
+
+```bash
+# GPU (CUDA 11.8)
+python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu118
+
+# CPU-only
+python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+```
+
+Then install the package in editable mode (the `make install` and setup steps below do this automatically):
+
+```bash
+python -m pip install -e ../gflownet
+```
+
 ## Setup
 
 Use Python 3.11 or 3.12.
